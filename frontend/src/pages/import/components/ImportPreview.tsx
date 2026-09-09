@@ -130,6 +130,13 @@ export function ImportPreview({
               </Button>
             }
           />
+        ) : result.rows_truncated ? (
+          <Alert
+            type="info"
+            showIcon
+            message={`共 ${result.total.toLocaleString()} 行，下方只列出其中一部分`}
+            description="上面的计数是全量统计，准确无误。逐行明细有条数上限——十万行的结果全部回带，光响应就有几十兆，而其中绝大多数是「成功」，逐条看没有价值。有问题的行会被优先保留。"
+          />
         ) : result.invalid > 0 ? (
           <Alert
             type="warning"
@@ -159,7 +166,9 @@ export function ImportPreview({
           value={filter}
           onChange={(value) => setFilter(value as 'all' | BucketKey)}
           options={[
-            { label: `全部 (${rows.length})`, value: 'all' },
+            // 计数用全量统计而不是 rows.length: 明细可能被截断,
+            // 拿列表长度当总数会给出一个比实际小的数字。
+            { label: `全部 (${result.total.toLocaleString()})`, value: 'all' },
             ...BUCKETS.map((bucket) => ({
               label: `${bucket.label} (${result[bucket.key] ?? 0})`,
               value: bucket.key,
@@ -174,7 +183,11 @@ export function ImportPreview({
           dataSource={filteredRows}
           tableLayout="fixed"
           scroll={{ y: 420 }}
-          pagination={{ pageSize: 50, showSizeChanger: false, showTotal: (t) => `共 ${t} 行` }}
+          pagination={{
+            pageSize: 50,
+            showSizeChanger: false,
+            showTotal: (t) => (result.rows_truncated ? `列出 ${t} 行` : `共 ${t} 行`),
+          }}
         />
 
         {/* 主操作放在逐行结果之后 —— 用户要先看完计数与明细才能决定导不导,

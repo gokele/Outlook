@@ -155,7 +155,8 @@ curl -H "Authorization: Bearer okc_xxx" \
 | `GET /api/admin/accounts/{id}/password` | 返回 `{password, recovery_email, recovery_password}` 三样明文，缺的那项为空串、字段本身始终存在。未解锁返回 403 `CONFIRM_REQUIRED`，三样都没有返回 404 `NO_SECRET`。**每次调用只写一条 `trigger=reveal` 的审计日志**——界面上它们是同一个弹窗的内容，拆开取会把「看了一次」记成三次 |
 | `POST /api/admin/accounts/batch/verify` | **同步接口**，返回 `{ok, fail}`。单批上限 20，超过返回 `BATCH_TOO_LARGE`。更大的量交给调度器 |
 | `POST /api/admin/accounts/batch/update` / `batch/delete` | 批量改与删 |
-| `POST /api/admin/import` | 见下 |
+| `POST /api/admin/import` | 见下。JSON 请求体，适合粘贴的小批量 |
+| `POST /api/admin/import/file` | `multipart/form-data`，字段 `file` 加 `separator`/`category_id`/`tags`/`on_duplicate`/`dry_run`。**文件大小不设上限**，后端逐行流式处理，内存占用与文件多大无关。自动识别 UTF-8 与 GBK |
 | `POST /api/admin/import/sample-verify` | `{n}` 默认 50，返回 `{ok, fail, valid_rate}` |
 | `GET /api/admin/mail` / `mail/raw` | 在线取件，语义同开放 API |
 | `GET/POST/PATCH/DELETE /api/admin/categories` | 删除时 `?move_to=<id>`，不传等于置为未分类 |
@@ -223,6 +224,10 @@ curl -H "Authorization: Bearer okc_xxx" \
 ```
 
 `action` 取值就是 `added` / `updated` / `skipped` / `warned` / `invalid` 五个。
+
+**`rows` 的条数有上限**（1000 条成功 + 1000 条失败），超出时 `rows_truncated` 为 `true`，
+失败行优先保留。各项计数与 `total` 始终是全量统计，不受截断影响——
+十万行的结果若逐行回带，响应本身就有几十兆，而其中绝大多数是"成功"，逐条看没有价值。
 导入**不做任何在线验证**，账号写入后状态为 `UNVERIFIED`。
 响应的 rows **不回显导入原文**：原文含密码与授权码，发回浏览器等于明文外泄。
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -651,5 +652,43 @@ func TestChangePassword(t *testing.T) {
 	if _, env = e.do(t, "POST", "/api/admin/login",
 		map[string]any{"username": "admin", "password": newPw}, nil, ""); env.Code != 200 {
 		t.Fatalf("新密码应能登录，得到 %d %s", env.Code, env.Message)
+	}
+}
+
+// TestImportAcceptsStringCategoryID 钉住一个真实踩过的坑：
+// 分类下拉框的选中值是字符串，此前 importReq 用的是 *int64，
+// 整个请求会以一句 json 层的解析错误失败，看不出是哪个字段的问题。
+func TestImportAcceptsStringCategoryID(t *testing.T) {
+	e := newEnv(t)
+	c := e.login(t)
+
+	code, env := e.do(t, "POST", "/api/admin/categories",
+		map[string]any{"name": "批次A"}, c, "")
+	if code != http.StatusOK {
+		t.Fatalf("建分类失败: %d", code)
+	}
+	data, _ := env.Data.(map[string]any)
+	catID := int64(data["id"].(float64))
+
+	line := "s1@outlook.com----pw----9e5f94bc-e8a4-4e73-b8be-63364c29d753----" +
+		"M.C528_BAY.0.U.-Cj1aB3xaB3xaB3xaB3xaB3xaB3xaB3xaB3xaB3xaB3xaB3x"
+
+	for _, tc := range []struct {
+		name string
+		val  any
+	}{
+		{"字符串", fmt.Sprintf("%d", catID)},
+		{"数字", catID},
+		{"null", nil},
+		{"空串", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, env := e.do(t, "POST", "/api/admin/import", map[string]any{
+				"text": line, "category_id": tc.val, "dry_run": true,
+			}, c, "")
+			if code != http.StatusOK {
+				t.Fatalf("应被接受，实际 %d：%+v", code, env)
+			}
+		})
 	}
 }

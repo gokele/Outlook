@@ -1,4 +1,4 @@
-import { downloadFile, request } from './request';
+import { downloadFile, request, toNumericId, toNumericIds } from './request';
 import type { QueryValue } from './request';
 import type {
   Account,
@@ -20,29 +20,6 @@ export interface AccountListParams {
   tag?: string;
   page: number;
   size: number;
-}
-
-/** 单账号可编辑字段 */
-/**
- * 把表格行键归一化成后端要求的数字 ID。
- * antd 的 rowSelection 行键类型是 string | number, 直接发出去会让后端的
- * int64 字段解析失败。空值与非数字一律丢弃, 不静默变成 0。
- */
-function toNumericIds(ids: Array<string | number> | undefined): number[] {
-  if (!ids) return [];
-  const out: number[] = [];
-  for (const raw of ids) {
-    const n = typeof raw === 'number' ? raw : Number.parseInt(raw, 10);
-    if (Number.isInteger(n)) out.push(n);
-  }
-  return out;
-}
-
-/** 把可空的分类 ID 归一化, 空值保持 null 以表示"移出分类" */
-function toNumericId(id: string | number | null | undefined): number | null {
-  if (id === null || id === undefined || id === '') return null;
-  const n = typeof id === 'number' ? id : Number.parseInt(id, 10);
-  return Number.isInteger(n) ? n : null;
 }
 
 export interface AccountPatch {

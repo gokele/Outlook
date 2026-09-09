@@ -117,6 +117,10 @@ func (s *Server) Handler() http.Handler {
 				r.Post("/accounts/batch/update", s.handleBatchUpdate)
 				r.Post("/accounts/batch/delete", s.handleBatchDelete)
 				r.Post("/import", s.handleImport)
+				// 文件导入单独放宽超时：全局中间件的 180 秒是按长轮询定的，
+				// 几十万行的导入远超这个量级，用全局值会在写到一半时被掐断。
+				r.With(middleware.Timeout(importTimeout)).
+					Post("/import/file", s.handleImportFile)
 				r.Post("/import/sample-verify", s.handleSampleVerify)
 				r.Post("/categories", s.handleCreateCategory)
 				r.Patch("/categories/{id}", s.handleUpdateCategory)

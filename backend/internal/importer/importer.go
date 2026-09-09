@@ -5,9 +5,12 @@
 package importer
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -59,13 +62,51 @@ type Row struct {
 
 // Result 是一次导入的汇总。
 type Result struct {
-	Added   int   `json:"added"`
-	Updated int   `json:"updated"`
-	Skipped int   `json:"skipped"`
-	Warned  int   `json:"warned"`
-	Invalid int   `json:"invalid"`
-	Total   int   `json:"total"`
-	Rows    []Row `json:"rows"`
+	Added   int `json:"added"`
+	Updated int `json:"updated"`
+	Skipped int `json:"skipped"`
+	Warned  int `json:"warned"`
+	Invalid int `json:"invalid"`
+	Total   int `json:"total"`
+	// Rows 是逐行结果，条数有上限。十万行的导入若把每一行都回带，
+	// 响应本身就有几十兆，浏览器解析完还要把它们全部装进内存 ——
+	// 而其中绝大多数是"成功"，逐条看没有任何价值。
+	Rows []Row `json:"rows"`
+	// RowsTruncated 为真表示 Rows 不是全部，计数仍然是准确的全量统计。
+	RowsTruncated bool `json:"rows_truncated"`
+
+	// problems 单独收，保证失败行不会被成功行挤掉。
+	problems []Row
+}
+
+// MaxDetailRows 是响应里最多回带的逐行结果条数（成功与失败各自的上限）。
+const MaxDetailRows = 1000
+
+// addRow 收集一行结果。
+//
+// 失败行比成功行值钱得多：出了问题的人要照着它去改数据，而成功行只需要
+// 一个总数。因此两者分开计数，失败行不会被大量成功行挤出去。
+func (r *Result) addRow(row Row) {
+	if row.Action == ActionInvalid || row.Action == ActionWarned {
+		if len(r.problems) < MaxDetailRows {
+			r.problems = append(r.problems, row)
+		} else {
+			r.RowsTruncated = true
+		}
+		return
+	}
+	if len(r.Rows) < MaxDetailRows {
+		r.Rows = append(r.Rows, row)
+		return
+	}
+	r.RowsTruncated = true
+}
+
+// finish 把失败行并进 Rows 并按行号排序，供响应输出。
+func (r *Result) finish() {
+	r.Rows = append(r.Rows, r.problems...)
+	r.problems = nil
+	sort.Slice(r.Rows, func(i, j int) bool { return r.Rows[i].Line < r.Rows[j].Line })
 }
 
 // Request 是一次导入请求。
@@ -188,6 +229,93 @@ func (im *Importer) Run(ctx context.Context, req Request) (*Result, error) {
 
 	lines := strings.Split(strings.ReplaceAll(req.Text, "\r\n", "\n"), "\n")
 	res := &Result{Rows: []Row{}}
+	if err := im.runChunk(ctx, lines, 0, sep, req, res); err != nil {
+		return res, err
+	}
+	res.finish()
+
+	// 整批拒绝策略：存在任一库内重复即全部回退。
+	if req.OnDuplicate == DupError && res.Skipped > 0 && !req.DryRun {
+		return res, fmt.Errorf("存在 %d 条库内重复，按 error 策略整批拒绝", res.Skipped)
+	}
+	return res, nil
+}
+
+// Stream 从流里逐行读入并导入，内存占用不随文件大小增长。
+//
+// 这是大文件导入走的路径：几十万行的文本既不该塞进浏览器的输入框，
+// 也不该整个读进请求体 —— 前者会让页面失去响应，后者要么撞上请求体上限，
+// 要么让服务端一次性吃下几百兆。
+//
+// 代价是批内去重的范围从"整个文件"缩小到"每 MaxRows 行一段"：跨段出现的
+// 重复邮箱不再走"保留最后一条"，而是落到库内去重，按 on_duplicate 策略处理。
+// 这个取舍是必要的 —— 要在整个文件范围内去重，就得把所有行同时留在内存里，
+// 那正是这条路径要避免的事。
+func (im *Importer) Stream(ctx context.Context, r io.Reader, req Request) (*Result, error) {
+	sep := req.Separator
+	if sep == "" {
+		sep = DefaultSeparator
+	}
+	if req.OnDuplicate == "" {
+		req.OnDuplicate = DupSkip
+	}
+	if req.Tenant == "" {
+		req.Tenant = "consumers"
+	}
+
+	res := &Result{Rows: []Row{}}
+	// 先过一遍编码探测：GBK 的文件直接当 UTF-8 读会整片乱码，
+	// 而乱码的邮箱只会被报成"格式非法"，看不出真正的原因。
+	sc := bufio.NewScanner(decodeReader(r))
+	// 单行上限放到 1MB：授权码本身可能上千字节，默认的 64KB 虽然够用，
+	// 但一旦超出 Scanner 会直接停止扫描，后面的行被静默丢弃 —— 那是最坏的失败方式。
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	chunk := make([]string, 0, MaxRows)
+	offset := 0
+	flush := func() error {
+		if len(chunk) == 0 {
+			return nil
+		}
+		if err := im.runChunk(ctx, chunk, offset, sep, req, res); err != nil {
+			return err
+		}
+		offset += len(chunk)
+		chunk = chunk[:0]
+		return nil
+	}
+
+	for sc.Scan() {
+		chunk = append(chunk, strings.TrimRight(sc.Text(), "\r"))
+		if len(chunk) >= MaxRows {
+			if err := flush(); err != nil {
+				return res, err
+			}
+		}
+		// 每段之间检查一次取消：几十万行的导入耗时可观，
+		// 客户端断开后没必要继续写库。
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return res, fmt.Errorf("读取文件失败: %w", err)
+	}
+	if err := flush(); err != nil {
+		return res, err
+	}
+	res.finish()
+
+	if req.OnDuplicate == DupError && res.Skipped > 0 && !req.DryRun {
+		return res, fmt.Errorf("存在 %d 条库内重复，按 error 策略整批拒绝", res.Skipped)
+	}
+	return res, nil
+}
+
+// runChunk 处理一段行。lineOffset 是这一段在整个文件里的起始行号，
+// 用来把行号还原成用户在文件里看到的那个数字。
+func (im *Importer) runChunk(ctx context.Context, lines []string, lineOffset int,
+	sep string, req Request, res *Result) error {
 
 	// 第一层：批内去重。同一邮箱出现多次时保留最后一条。
 	type slot struct {
@@ -202,14 +330,8 @@ func (im *Importer) Run(ctx context.Context, req Request) (*Result, error) {
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		if len(ordered) >= MaxRows {
-			res.Rows = append(res.Rows, Row{Line: i + 1, Action: ActionInvalid,
-				Reason: fmt.Sprintf("超过单批上限 %d 行，请分批导入", MaxRows), Raw: raw})
-			res.Invalid++
-			continue
-		}
 		p := ParseLine(raw, sep)
-		p.line = i + 1
+		p.line = lineOffset + i + 1
 		if p.err != "" {
 			ordered = append(ordered, p)
 			continue
@@ -268,14 +390,9 @@ func (im *Importer) Run(ctx context.Context, req Request) (*Result, error) {
 				}
 			}
 		}
-		res.Rows = append(res.Rows, row)
+		res.addRow(row)
 	}
-
-	// 整批拒绝策略：存在任一库内重复即全部回退。
-	if req.OnDuplicate == DupError && res.Skipped > 0 && !req.DryRun {
-		return res, fmt.Errorf("存在 %d 条库内重复，按 error 策略整批拒绝", res.Skipped)
-	}
-	return res, nil
+	return nil
 }
 
 // upsert 处理单行的库内去重与写入。

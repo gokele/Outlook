@@ -188,7 +188,16 @@ export interface ImportResult {
   skipped: number;
   warned: number;
   invalid: number;
+  /** 处理的总行数 (空行不计) */
+  total: number;
+  /** 逐行结果。条数有上限, 见 rows_truncated */
   rows: ImportRow[];
+  /**
+   * 为真表示 rows 不是全部, 但上面的各项计数仍是全量统计。
+   * 十万行的导入若把每行都回带, 响应本身就有几十兆, 而其中绝大多数是"成功",
+   * 逐条看没有任何价值。失败行会被优先保留。
+   */
+  rows_truncated: boolean;
 }
 
 /** 令牌获取分档: 命中缓存 / 用 refresh_token 换取 / 轮换 refresh_token 本身 */

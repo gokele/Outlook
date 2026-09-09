@@ -1,66 +1,32 @@
-import { UploadOutlined } from '@ant-design/icons';
-import { Alert, Button, Card, Col, Form, Input, Radio, Row, Select, Space, Typography, Upload } from 'antd';
-import type { UploadProps } from 'antd';
+import { Alert, Button, Card, Col, Form, Input, Radio, Row, Segmented, Select, Space, Typography } from 'antd';
+import { useState } from 'react';
 import { useCategoryOptions } from '@/hooks/useCategories';
 import { useTags } from '@/hooks/useTags';
-import { toast } from '@/lib/feedback';
 import type { ImportFormPayload } from '../hooks/useImport';
 import type { ImportFormValues } from './importFormModel';
 import { DEFAULT_SEPARATOR, toImportPayload } from './importFormModel';
-import {
-  countImportLines,
-  IMPORT_FILE_ACCEPT,
-  MAX_IMPORT_ROWS,
-  readAccountFile,
-} from './readAccountFile';
+import { FilePicker } from './FilePicker';
+
+/** 两种来源: 粘贴文本, 或上传文件 */
+type Source = 'text' | 'file';
 
 interface ImportFormProps {
   loading: boolean;
   disabled: boolean;
-  onPreview: (payload: ImportFormPayload) => void;
+  onPreview: (payload: ImportFormPayload, file: File | null) => void;
 }
 
-/** 导入配置表单: 文本、分隔符、目标分类、标签与重复策略 */
+/** 导入配置表单: 来源、分隔符、目标分类、标签与重复策略 */
 export function ImportForm({ loading, disabled, onPreview }: ImportFormProps) {
   const [form] = Form.useForm<ImportFormValues>();
   const { plainOptions } = useCategoryOptions();
   const { options: tagOptions } = useTags();
+  const [source, setSource] = useState<Source>('text');
+  const [file, setFile] = useState<File | null>(null);
 
   /** 校验后提交预览 (dry_run) */
   const handleFinish = (values: ImportFormValues) => {
-    onPreview(toImportPayload(values));
-  };
-
-  /**
-   * 读入账号文件并写进文本框。
-   *
-   * 已有内容时追加而不是覆盖 —— 覆盖会直接吞掉用户刚粘贴的东西,
-   * 而追加正好支持把多个文件拼到一批里导入。
-   */
-  const handleFile: UploadProps['beforeUpload'] = (file) => {
-    void (async () => {
-      try {
-        const text = await readAccountFile(file);
-        const current = (form.getFieldValue('text') as string | undefined)?.trim() ?? '';
-        const merged = current ? `${current}\n${text}` : text;
-        form.setFieldValue('text', merged);
-
-        const added = countImportLines(text);
-        const total = countImportLines(merged);
-        toast.success(
-          current
-            ? `已追加 ${file.name}: ${added} 行, 共 ${total} 行`
-            : `已读取 ${file.name}: ${added} 行`,
-        );
-        if (total > MAX_IMPORT_ROWS) {
-          toast.warning(`共 ${total} 行, 超过单批上限 ${MAX_IMPORT_ROWS} 行, 超出部分会被标为无效`);
-        }
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : '读取文件失败');
-      }
-    })();
-    // 返回 false 只取文件内容, 不触发 antd 的自动上传 —— 导入接口收的是文本。
-    return false;
+    onPreview(toImportPayload({ ...values, text: values.text ?? '' }), source === 'file' ? file : null);
   };
 
   return (
@@ -103,36 +69,41 @@ export function ImportForm({ loading, disabled, onPreview }: ImportFormProps) {
         initialValues={{ separator: DEFAULT_SEPARATOR, on_duplicate: 'skip', tags: [] }}
         onFinish={handleFinish}
       >
-        <Form.Item
-          name="text"
-          label={
-            <Space size={12} align="center">
-              <span>账号文本</span>
-              <Upload
-                accept={IMPORT_FILE_ACCEPT}
-                showUploadList={false}
-                maxCount={1}
-                disabled={disabled}
-                beforeUpload={handleFile}
-              >
-                <Button size="small" icon={<UploadOutlined />} disabled={disabled}>
-                  从文件导入
-                </Button>
-              </Upload>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                支持 txt / csv, 自动识别 UTF-8 与 GBK 编码
-              </Typography.Text>
-            </Space>
-          }
-          rules={[{ required: true, message: '请粘贴或上传需要导入的账号文本' }]}
-        >
-          <Input.TextArea
-            rows={12}
-            spellCheck={false}
-            placeholder={`粘贴账号文本, 或点上方"从文件导入"\n\nuser1@outlook.com${DEFAULT_SEPARATOR}password${DEFAULT_SEPARATOR}client-id${DEFAULT_SEPARATOR}refresh-token`}
-            style={{ fontFamily: 'var(--app-font-mono)', fontSize: 13 }}
+        <Form.Item label="导入来源" style={{ marginBottom: 12 }}>
+          <Segmented
+            value={source}
+            disabled={disabled}
+            onChange={(v) => setSource(v as Source)}
+            options={[
+              { label: '粘贴文本', value: 'text' },
+              { label: '上传文件', value: 'file' },
+            ]}
           />
         </Form.Item>
+
+        {source === 'file' ? (
+          <Form.Item>
+            <FilePicker
+              file={file}
+              disabled={disabled}
+              onPick={setFile}
+              onClear={() => setFile(null)}
+            />
+          </Form.Item>
+        ) : (
+          <Form.Item
+            name="text"
+            label="账号文本"
+            rules={[{ required: true, message: '请粘贴需要导入的账号文本' }]}
+          >
+            <Input.TextArea
+              rows={12}
+              spellCheck={false}
+              placeholder={`粘贴账号文本。量大时改用"上传文件"\n\nuser1@outlook.com${DEFAULT_SEPARATOR}password${DEFAULT_SEPARATOR}client-id${DEFAULT_SEPARATOR}refresh-token`}
+              style={{ fontFamily: 'var(--app-font-mono)', fontSize: 13 }}
+            />
+          </Form.Item>
+        )}
 
         <Row gutter={[16, 0]}>
           <Col xs={24} md={8} lg={6}>
@@ -181,11 +152,22 @@ export function ImportForm({ loading, disabled, onPreview }: ImportFormProps) {
         </Row>
 
         <Form.Item style={{ marginBottom: 0 }}>
-          <Space>
-            <Button type="primary" htmlType="submit" loading={loading}>
+          <Space wrap>
+            <Button
+              type="primary"
+              htmlType="submit"
+              loading={loading}
+              disabled={source === 'file' && !file}
+            >
               预览校验结果
             </Button>
-            <Button onClick={() => form.resetFields()} disabled={loading}>
+            <Button
+              onClick={() => {
+                form.resetFields();
+                setFile(null);
+              }}
+              disabled={loading}
+            >
               清空
             </Button>
             <Typography.Text type="secondary">导入前必须先预览, 确认无误后再提交</Typography.Text>

@@ -23,12 +23,16 @@ import (
 // ---------- 导入 ----------
 
 type importReq struct {
-	Text        string   `json:"text"`
-	Separator   string   `json:"separator"`
-	CategoryID  *int64   `json:"category_id"`
-	Tags        []string `json:"tags"`
-	OnDuplicate string   `json:"on_duplicate"`
-	DryRun      bool     `json:"dry_run"`
+	Text      string `json:"text"`
+	Separator string `json:"separator"`
+	// 用 NullableID 而不是 *int64：表单控件的选中值常带成字符串，
+	// 直接用 *int64 会让整个请求以一句 json 层的解析错误失败，
+	// 看不出是"目标分类"这个字段的问题。其余接口早已统一这么做，
+	// 这里曾是唯一的漏网之鱼。
+	CategoryID  NullableID `json:"category_id"`
+	Tags        []string   `json:"tags"`
+	OnDuplicate string     `json:"on_duplicate"`
+	DryRun      bool       `json:"dry_run"`
 }
 
 // handleImport 批量导入。导入只写库，不向微软发起任何请求。
@@ -46,7 +50,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	res, err := s.imp.Run(r.Context(), importer.Request{
 		Text:        req.Text,
 		Separator:   req.Separator,
-		CategoryID:  req.CategoryID,
+		CategoryID:  req.CategoryID.Value,
 		Tags:        req.Tags,
 		OnDuplicate: importer.OnDuplicate(req.OnDuplicate),
 		Tenant:      s.cfg.Tenant,

@@ -14,13 +14,17 @@ import { useImport } from './hooks/useImport';
 export default function ImportPage() {
   const { preview, commit } = useImport();
   const [payload, setPayload] = useState<ImportFormPayload | null>(null);
+  // 文件句柄要留到正式提交时再用一次。浏览器不会把内容读进内存,
+  // 只是持有一个指向磁盘的引用, 因此留着它不占什么东西。
+  const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [committed, setCommitted] = useState(false);
 
   /** 提交预览请求, 保存本次入参供后续正式导入复用 */
-  const handlePreview = async (values: ImportFormPayload) => {
-    const data = await preview.mutateAsync(values);
+  const handlePreview = async (values: ImportFormPayload, picked: File | null) => {
+    const data = await preview.mutateAsync({ payload: values, file: picked });
     setPayload(values);
+    setFile(picked);
     setResult(data);
     setCommitted(false);
   };
@@ -28,7 +32,7 @@ export default function ImportPage() {
   /** 用预览时的同一份入参正式导入 */
   const handleCommit = async () => {
     if (!payload) return;
-    const data = await commit.mutateAsync(payload);
+    const data = await commit.mutateAsync({ payload, file });
     setResult(data);
     setCommitted(true);
   };
@@ -57,7 +61,7 @@ export default function ImportPage() {
           <ImportForm
             loading={preview.isPending}
             disabled={preview.isPending}
-            onPreview={(values) => void handlePreview(values)}
+            onPreview={(values, picked) => void handlePreview(values, picked)}
           />
         ) : (
           <ImportPreview

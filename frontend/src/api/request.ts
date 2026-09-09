@@ -17,6 +17,34 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * 把可空的数字 ID 归一化。
+ *
+ * 表单控件（尤其是 antd Select）的选中值往往是字符串, 直接发出去会让后端的
+ * int64 字段解析失败, 报出的还是 json 层面的错误, 看不出是哪个控件的问题。
+ * 空值保持 null 以表达"清空/不设置", 而不是悄悄变成 0 —— 那会指向 id 为 0
+ * 的记录, 或被后端当成"未提供"。
+ */
+export function toNumericId(id: string | number | null | undefined): number | null {
+  if (id === null || id === undefined || id === '') return null;
+  const n = typeof id === 'number' ? id : Number.parseInt(id, 10);
+  return Number.isInteger(n) ? n : null;
+}
+
+/**
+ * 把一组行键归一化成数字 ID。
+ * 非数字一律丢弃, 不静默变成 0 —— 那会误伤一条真实记录。
+ */
+export function toNumericIds(ids: Array<string | number> | undefined): number[] {
+  if (!ids) return [];
+  const out: number[] = [];
+  for (const raw of ids) {
+    const n = toNumericId(raw);
+    if (n !== null) out.push(n);
+  }
+  return out;
+}
+
 /** 查询参数值类型, undefined / null / 空字符串会被丢弃 */
 export type QueryValue = string | number | boolean | Array<string | number> | undefined | null;
 
