@@ -186,19 +186,6 @@ func (u *Updater) Apply(ctx context.Context, rel *Release) (backup string, err e
 	return u.applyTo(ctx, rel, self)
 }
 
-// SelfPath 返回当前二进制的真实路径（解开符号链接）。
-func SelfPath() (string, error) {
-	self, err := os.Executable()
-	if err != nil {
-		return "", ErrNotSupported
-	}
-	self, err = filepath.EvalSymlinks(self)
-	if err != nil {
-		return "", ErrNotSupported
-	}
-	return self, nil
-}
-
 // applyTo 把新版本装到指定路径。拆出来是为了能在测试里对着临时目录跑，
 // 而不必真的替换测试进程自己的二进制。
 func (u *Updater) applyTo(ctx context.Context, rel *Release, self string) (backup string, err error) {
@@ -257,28 +244,10 @@ func (u *Updater) applyTo(ctx context.Context, rel *Release, self string) (backu
 	if err = tmp.Close(); err != nil {
 		return "", err
 	}
-	if err = os.Chmod(tmpName, 0o755); err != nil {
-		return "", err
-	}
 
-	// 先把现役的挪开，再把新的放进它的位置。
-	//
-	// 顺序不能反成"直接覆盖"：Windows 不允许改写正在运行的 .exe，但允许把它
-	// 改名；Linux 同样拒绝写入运行中的可执行文件。先挪后放是两边都成立的唯一顺序。
-	backup = self + ".old"
-	_ = os.Remove(backup)
-	if err = os.Rename(self, backup); err != nil {
-		return "", fmt.Errorf("备份当前版本失败: %w", err)
-	}
-	if err = os.Rename(tmpName, self); err != nil {
-		// 新的没放进去，把旧的挪回来，否则服务重启后连二进制都找不到。
-		if restoreErr := os.Rename(backup, self); restoreErr != nil {
-			return "", fmt.Errorf("替换失败且回滚失败，请手动把 %s 改名回 %s: %w",
-				backup, self, err)
-		}
-		return "", fmt.Errorf("替换二进制失败: %w", err)
-	}
-	return backup, nil
+	// 替换动作按平台分开实现：Unix 直接覆盖（内核按 inode 引用运行中的映像），
+	// Windows 必须先把自己改名让路。见 install_unix.go 与 install_windows.go。
+	return install(tmpName, self)
 }
 
 // fetch 下载一个资源，限制最大体积。

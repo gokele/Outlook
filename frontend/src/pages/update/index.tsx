@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Empty, Space, Tag, Typography, theme } from 'antd';
 import { useState } from 'react';
 import { fetchUpdateStatus } from '@/api/update';
+import { toast } from '@/lib/feedback';
 import { PageContainer } from '@/components/common/PageContainer';
 import { QueryStateView } from '@/components/common/QueryStateView';
 import { useModal } from '@/components/modal';
@@ -36,7 +37,7 @@ export default function UpdatePage() {
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
 
-  const { data, isPending, isFetching, error, refetch } = useQuery({
+  const { data, isPending, isFetching, error, refetch, dataUpdatedAt } = useQuery({
     queryKey: queryKeys.update.status(),
     queryFn: fetchUpdateStatus,
     // 版本信息没必要频繁问 GitHub，它那边对未认证请求还有速率限制。
@@ -50,6 +51,34 @@ export default function UpdatePage() {
 
   const latest = data?.latest ?? null;
   const canInstall = Boolean(data?.supported && data?.available);
+
+  /**
+   * 手动检查更新。
+   *
+   * 必须给出明确回馈：查完之后界面上多半什么都没变（本来就是最新版），
+   * 只让按钮转半秒圈，点的人无从判断是查过了还是根本没响应。
+   */
+  const handleCheck = async () => {
+    const res = await refetch();
+    const next = res.data;
+    if (!next) {
+      toast.error('检查失败，请稍后再试');
+      return;
+    }
+    if (next.error) {
+      toast.error(next.error);
+      return;
+    }
+    if (next.available && next.latest) {
+      toast.success(`发现新版本 ${next.latest.version}`);
+      return;
+    }
+    if (!next.latest) {
+      toast.info('仓库还没有发布任何版本');
+      return;
+    }
+    toast.success(`已是最新版本 ${next.current}`);
+  };
 
   const startUpdate = async () => {
     if (!latest) return;
@@ -77,14 +106,21 @@ export default function UpdatePage() {
       title="在线更新"
       description="从 GitHub 拉取新版本，校验后自动替换并重启。"
       extra={
-        <Button
-          icon={<ReloadOutlined />}
-          loading={isFetching}
-          disabled={install.busy}
-          onClick={() => void refetch()}
-        >
-          检查更新
-        </Button>
+        <Space size={8}>
+          {dataUpdatedAt ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              上次检查 {formatUnix(Math.floor(dataUpdatedAt / 1000), 'HH:mm:ss')}
+            </Typography.Text>
+          ) : null}
+          <Button
+            icon={<ReloadOutlined />}
+            loading={isFetching}
+            disabled={install.busy}
+            onClick={() => void handleCheck()}
+          >
+            检查更新
+          </Button>
+        </Space>
       }
     >
       <QueryStateView isPending={isPending} error={error} onRetry={() => void refetch()} skeletonRows={6}>

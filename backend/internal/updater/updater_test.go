@@ -177,3 +177,61 @@ func TestLookupChecksum(t *testing.T) {
 		t.Errorf("不存在的条目应返回空: %q", got)
 	}
 }
+
+// TestApplyKeepsOriginalPath 钉住那个让"更新完还要手动重启"的坑。
+//
+// 替换之后，原路径必须是新版本，备份是旧版本。真正致命的是另一半：
+// Linux 的 os.Executable() 跟随 inode，装完再问会得到备份文件的路径，
+// execve 于是把旧版本重新拉起来 —— 进程号没变、服务也在，唯独版本没动。
+// 因此重启目标一定要在替换之前捕获。
+func TestApplyKeepsOriginalPath(t *testing.T) {
+	srv, _ := newFakeGitHub(t, []byte("新版二进制"), "")
+	u := newUpdater(t, srv, "v1.0.0")
+	rel, err := u.Latest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	self := filepath.Join(dir, "api")
+	if err := os.WriteFile(self, []byte("旧版二进制"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	backup, err := u.applyTo(context.Background(), rel, self)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 原路径拿到新版本 —— 重启就该 exec 这个路径。
+	if got, _ := os.ReadFile(self); string(got) != "新版二进制" {
+		t.Fatalf("原路径应是新版本，实际 %q", got)
+	}
+	// 备份是旧版本，起不来时靠它换回去。
+	if got, _ := os.ReadFile(backup); string(got) != "旧版二进制" {
+		t.Fatalf("备份应是旧版本，实际 %q", got)
+	}
+	if backup == self {
+		t.Fatal("备份不能覆盖原路径")
+	}
+	// 原有权限位要保留：有人可能特意设过更严格的 750。
+	st, err := os.Stat(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0o750 {
+		t.Fatalf("应保留原权限位 0750，实际 %o", perm)
+	}
+}
+
+// TestRelaunchRejectsBadTarget 校验 exec 前的兜底检查：
+// 目标不存在或不可执行时必须报错，让调用方退回给进程守护拉起，
+// 而不是 exec 到一个空路径把进程弄没。
+func TestRelaunchRejectsBadTarget(t *testing.T) {
+	if err := Relaunch(""); err == nil {
+		t.Fatal("空路径必须报错")
+	}
+	if err := Relaunch(filepath.Join(t.TempDir(), "不存在")); err == nil {
+		t.Fatal("不存在的目标必须报错")
+	}
+}

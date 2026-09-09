@@ -87,6 +87,17 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 重启目标必须在替换二进制之前取。
+	//
+	// 安装会让二进制路径指向新的 inode，而旧 inode 仍被备份文件引用着。
+	// Linux 的 os.Executable() 读 /proc/self/exe，跟随的是 inode 而非路径，
+	// 装完之后再问就会得到备份文件 —— execve 于是把旧版本重新拉了起来：
+	// 进程号没变、服务也在，唯独版本没动，表现就是"更新完还得手动重启"。
+	execPath, pathErr := updater.SelfPath()
+	if pathErr != nil {
+		s.log.Warn("取不到自身路径，更新后需要手动重启", "err", pathErr)
+	}
+
 	up := s.updater()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -124,13 +135,26 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 	// 否则用户看到的是一个断掉的连接，而不是"正在重启"。
 	go func() {
 		time.Sleep(1200 * time.Millisecond)
-		s.log.Warn("为应用更新而重启", "to", rel.Version)
+		s.log.Warn("为应用更新而重启", "to", rel.Version, "exec", execPath)
+
+		// 收尾要限时。它只是把在途日志落盘，卡住了不该拦着重启 ——
+		// 否则一个写不进去的日志队列会把整次更新变成"装好了但没生效"。
 		if s.beforeRestart != nil {
-			s.beforeRestart()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				s.beforeRestart()
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				s.log.Warn("收尾超时，直接重启")
+			}
 		}
+
 		// 优先原地换映像：进程号不变，不依赖任何进程守护。
-		if err := updater.Relaunch(); err != nil {
-			s.log.Error("原地重启失败，退出并交给进程守护拉起", "err", err)
+		if err := updater.Relaunch(execPath); err != nil {
+			s.log.Error("原地重启失败，退出并交给进程守护拉起", "err", err, "exec", execPath)
 			if s.restart != nil {
 				s.restart()
 				return
