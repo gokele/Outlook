@@ -186,6 +186,9 @@ curl -H "Authorization: Bearer okc_xxx" \
 | `GET/PUT /api/admin/settings` | 保存后立即生效，响应带最新的 `health` |
 | `GET /api/admin/logs` | `type=fetch\|rotate\|reveal`、`account_id`、`result`、分页 |
 | `DELETE /api/admin/logs` | body 二选一：`{ids:[…]}` 删除选中；`{clear:"fetch"\|"rotate"\|"reveal"\|"all"}` 按范围清空。返回 `{deleted}` |
+| `POST /api/admin/jobs/verify` | 起后台批量验证任务。`{ids}` 或 `{filter}` 二选一，`concurrency` 默认 5、硬顶 16，单任务上限 20000 个账号。返回任务快照。已有同类任务在跑时返回 409 `JOB_RUNNING` |
+| `GET /api/admin/jobs` / `jobs/{id}` | 任务列表与单个进度。进度靠轮询后者获取 |
+| `POST /api/admin/jobs/{id}/cancel` | 取消任务。未开始的不再执行，在途的请求立即断开 |
 | `POST /api/admin/clients/{clientID}/rollback` | 把某 client_id 下被误判为失效的账号回滚为未验证 |
 | `POST /api/admin/me/username` | `{username, current_password}` 改登录名。3 到 32 位，只收字母数字与 `. _ -`。重名返回 409 `USERNAME_EXISTS`，密码错返回 400 `WRONG_PASSWORD`。改名不影响任何会话 |
 | `GET /api/admin/update` | 当前版本与 GitHub 上的最新发布。返回 `{current, repo, supported, latest, available, reason?, error?}`，`latest` 含 `version`、`name`、`notes`、`url`、`published_at`、`asset_name`、`asset_size` |
@@ -234,6 +237,30 @@ curl -H "Authorization: Bearer okc_xxx" \
 十万行的结果若逐行回带，响应本身就有几十兆，而其中绝大多数是"成功"，逐条看没有价值。
 导入**不做任何在线验证**，账号写入后状态为 `UNVERIFIED`。
 响应的 rows **不回显导入原文**：原文含密码与授权码，发回浏览器等于明文外泄。
+
+### 后台任务
+
+```jsonc
+// GET /api/admin/jobs/{id}
+{
+  "id": "job_…", "type": "verify", "status": "running",  // running | done | canceled
+  "total": 5000, "done": 1832, "ok": 1700, "fail": 120, "skipped": 12,
+  "concurrency": 8, "started_at": 1757300000, "finished_at": 0,
+  "reasons": [                                  // 按命中数从多到少
+    { "code": "AADSTS700082", "summary": "授权码已因 90 天未使用而过期",
+      "count": 98, "sample": "alice@outlook.com" },
+    { "code": "NETWORK_ERROR", "summary": "连接被断开，多为出口不稳定",
+      "count": 22, "sample": "bob@outlook.com" }
+  ]
+}
+```
+
+**任务只在内存里。** 进程重启会丢掉进度视图，但已完成的部分是落库的——
+账号状态该改的都改了，丢的只是"还剩多少"这个显示。
+
+没有 AADSTS 码的失败（网络、超时、出口不可用、被取消）也会归一个粗类，
+不会全部堆进 `UNKNOWN`——一千条"未知错误"说明不了任何问题，
+而"网络不可达 900 个"立刻指向出口而不是账号。
 
 ### 日志
 

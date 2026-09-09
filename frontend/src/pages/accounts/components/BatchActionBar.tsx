@@ -4,6 +4,7 @@ import {
   FolderOpenOutlined,
   SafetyCertificateOutlined,
   TagsOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { Alert, Button, Space, Tooltip } from 'antd';
 import { BATCH_VERIFY_MAX } from '@/constants/account';
@@ -41,8 +42,9 @@ export function BatchActionBar({
   // 封禁账号不参与验证: 对它重试只是白白多打几次微软的接口,
   // 还会给这个 client_id 的失败计数添砖加瓦, 最后可能把同批健康账号一起熔断。
   const verifiable = selectedCount - bannedCount;
-  // 批量验证是同步在线验证, 单批有上限; 超限时直接禁用并说明原因
-  const verifyOverLimit = verifiable > BATCH_VERIFY_MAX;
+  // 超过同步接口的上限不再是拒绝, 而是自动转成后台任务。
+  // 上限的由来是 180 秒的请求超时, 不是"不该验这么多"。
+  const asJob = verifiable > BATCH_VERIFY_MAX;
 
   return (
     <Alert
@@ -70,20 +72,20 @@ export function BatchActionBar({
           </Button>
           <Tooltip
             title={
-              verifyOverLimit
-                ? `单次最多验证 ${BATCH_VERIFY_MAX} 个账号, 更大的量请交给轮换调度器`
+              asJob
+                ? `超过 ${BATCH_VERIFY_MAX} 个会转为后台任务, 进度可查、可随时取消`
                 : bannedCount > 0
                   ? `已跳过 ${bannedCount} 个封禁账号, 它们重试也不会成功`
-                  : `在线逐个验证并续期, 单次上限 ${BATCH_VERIFY_MAX} 个`
+                  : `在线逐个验证并续期`
             }
           >
             <Button
               size="small"
-              icon={<SafetyCertificateOutlined />}
-              disabled={disabled || loading || verifyOverLimit || verifiable === 0}
+              icon={asJob ? <ThunderboltOutlined /> : <SafetyCertificateOutlined />}
+              disabled={disabled || loading || verifiable === 0}
               onClick={onVerify}
             >
-              批量验证{bannedCount > 0 ? ` (${verifiable})` : ''}
+              {asJob ? `后台验证 (${verifiable})` : `批量验证${bannedCount > 0 ? ` (${verifiable})` : ''}`}
             </Button>
           </Tooltip>
           <Button size="small" icon={<DownloadOutlined />} onClick={onExport}>

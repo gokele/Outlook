@@ -12,7 +12,10 @@ import { toast } from '@/lib/feedback';
 import type { AccountsSearch } from '@/lib/router/searchSchemas';
 import { AccountFilters } from './components/AccountFilters';
 import { AccountTable } from './components/AccountTable';
+import { ApiError } from '@/api/request';
+import { startVerifyJob } from '@/api/jobs';
 import { BatchActionBar } from './components/BatchActionBar';
+import { JobProgress } from './components/JobProgress';
 import type { BatchUpdateMode, BatchUpdateValue } from './components/BatchUpdateContent';
 import { BatchUpdateContent } from './components/BatchUpdateContent';
 import { EditAccountModal } from './components/EditAccountModal';
@@ -39,6 +42,8 @@ export default function AccountsPage() {
   const [editing, setEditing] = useState<Account | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | number | null>(null);
+  // 正在跑的批量任务 id。只留一个 —— 后端也只允许同类任务跑一个。
+  const [jobId, setJobId] = useState<string | null>(null);
 
   const { items, total, isPending, isFetching, error, refetch, params } = useAccountList(search);
   const mutations = useAccountMutations();
@@ -123,14 +128,29 @@ export default function AccountsPage() {
    * 该接口同步在线验证, 单批上限 BATCH_VERIFY_MAX; 超限在前端就拦下,
    * 不必等后端返回 400 BATCH_TOO_LARGE。
    */
-  const handleBatchVerify = () => {
-    if (selectedKeys.length > BATCH_VERIFY_MAX) {
-      toast.warning(
-        `单次最多验证 ${BATCH_VERIFY_MAX} 个账号 (当前选中 ${selectedKeys.length} 个), 更大的量请交给轮换调度器`,
-      );
+  /**
+   * 批量验证。
+   *
+   * 按数量走两条路：少量走同步接口，点一下就拿到结果，最直接；
+   * 超过同步接口的上限就转成后台任务 —— 上限的由来是 180 秒的请求超时，
+   * 硬走同步只会在写到一半时被掐断。这个切换不需要用户操心，
+   * 他要的只是"把这些验一遍"。
+   */
+  const handleBatchVerify = async () => {
+    if (selectedKeys.length <= BATCH_VERIFY_MAX) {
+      mutations.batchVerify.mutate({ ids: selectedKeys });
       return;
     }
-    mutations.batchVerify.mutate({ ids: selectedKeys });
+    try {
+      const job = await startVerifyJob({ ids: selectedKeys });
+      setJobId(job.id);
+      setSelectedKeys([]);
+      toast.success(`已转为后台任务，共 ${job.total} 个账号，可随时取消`);
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError ? error.message : '无法启动批量验证任务',
+      );
+    }
   };
 
   /**
@@ -222,6 +242,19 @@ export default function AccountsPage() {
         onRefresh={() => void refetch()}
       />
 
+      {jobId ? (
+        <JobProgress
+          jobId={jobId}
+          onFinished={() => {
+            // 任务结束后才刷新列表。跑的过程中每秒重拉一次几千行的列表
+            // 既没必要也很贵 —— 进度看任务面板就够了。
+            void queryClient.invalidateQueries({ queryKey: queryKeys.accounts.root });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.overview.root });
+          }}
+          onDismiss={() => setJobId(null)}
+        />
+      ) : null}
+
       <BatchActionBar
         selectedCount={selectedKeys.length}
         bannedCount={bannedSelected}
@@ -229,7 +262,7 @@ export default function AccountsPage() {
         onClear={() => setSelectedKeys([])}
         onMoveCategory={() => void handleBatchUpdate('category')}
         onAddTags={() => void handleBatchUpdate('tags')}
-        onVerify={handleBatchVerify}
+        onVerify={() => void handleBatchVerify()}
         onExport={() => setExportOpen(true)}
         onDelete={() => void handleBatchDelete()}
       />

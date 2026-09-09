@@ -51,6 +51,11 @@ export const queryKeys = {
     root: ['update'] as const,
     status: () => ['update', 'status'] as const,
   },
+  jobs: {
+    root: ['jobs'] as const,
+    list: () => ['jobs', 'list'] as const,
+    detail: (id: string) => ['jobs', 'detail', id] as const,
+  },
   logs: {
     root: ['logs'] as const,
     lists: () => ['logs', 'list'] as const,

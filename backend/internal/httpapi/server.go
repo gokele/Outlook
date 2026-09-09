@@ -12,6 +12,7 @@ import (
 	"github.com/kele/outlook-console/internal/config"
 	"github.com/kele/outlook-console/internal/crypto"
 	"github.com/kele/outlook-console/internal/importer"
+	"github.com/kele/outlook-console/internal/jobs"
 	"github.com/kele/outlook-console/internal/orchestrator"
 	"github.com/kele/outlook-console/internal/proxypool"
 	"github.com/kele/outlook-console/internal/scheduler"
@@ -38,6 +39,9 @@ type Server struct {
 	restart func()
 
 	limiter *keyLimiter
+	// jobs 持有后台批量任务。放在进程内存里：任务是纯粹的过程量，
+	// 已完成的部分本来就落库了，重启丢的只是"还剩多少"这个显示。
+	jobs *jobs.Registry
 }
 
 // New 构造 HTTP 服务。
@@ -46,6 +50,7 @@ func New(cfg *config.Config, st *store.Store, box *crypto.Box, ts *tokensvc.Serv
 	return &Server{
 		cfg: cfg, st: st, box: box, ts: ts, orch: orch, sched: sched,
 		imp: importer.New(st, box), log: log, limiter: &keyLimiter{},
+		jobs: jobs.NewRegistry(),
 	}
 }
 
@@ -102,6 +107,9 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/apikeys", s.handleListAPIKeys)
 			r.Get("/settings", s.handleGetSettings)
 			r.Get("/logs", s.handleListLogs)
+			// 任务列表与进度是只读的，只读账号也该看得到正在跑什么。
+			r.Get("/jobs", s.handleListJobs)
+			r.Get("/jobs/{id}", s.handleGetJob)
 
 			// 写操作要求管理员角色。
 			r.Group(func(r chi.Router) {
@@ -146,6 +154,9 @@ func (s *Server) Handler() http.Handler {
 				r.Delete("/logs", s.handleDeleteLogs)
 				r.Post("/clients/{clientID}/rollback", s.handleRollbackInvalid)
 				// 在线更新：查状态只读，安装要重新验密码。
+				// 后台批量任务：进度可查、可取消、失败原因自动聚合。
+				r.Post("/jobs/verify", s.handleStartVerifyJob)
+				r.Post("/jobs/{id}/cancel", s.handleCancelJob)
 				r.Get("/update", s.handleUpdateStatus)
 				r.Post("/update/apply", s.handleApplyUpdate)
 			})
