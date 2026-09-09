@@ -218,3 +218,89 @@ func TestImportSetsUnverifiedAndQueued(t *testing.T) {
 		t.Error("导入后应立即进入首验队列")
 	}
 }
+
+// TestParseLineSixFields 校验六段格式，以及它与四段格式的区分。
+//
+// 最要命的一类是授权码本身含 ---- —— 微软的 refresh_token 是不透明串，
+// 里面出现分隔符完全可能。切错的后果很隐蔽：授权码被截断成一个看起来
+// 正常、用起来必然失败的值，而失败要等到首次取件才暴露。
+func TestParseLineSixFields(t *testing.T) {
+	const guid = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
+	tok := longToken("z")
+
+	t.Run("六段完整", func(t *testing.T) {
+		p := ParseLine("a@outlook.com----pw1----"+guid+"----"+tok+"----rec@gmail.com----pw2", DefaultSeparator)
+		if p.err != "" {
+			t.Fatalf("不该报错: %s", p.err)
+		}
+		if p.token != tok {
+			t.Errorf("授权码被切坏: %q", p.token)
+		}
+		if p.recoveryEmail != "rec@gmail.com" || p.recoveryPassword != "pw2" {
+			t.Errorf("辅助邮箱解析错误: %q / %q", p.recoveryEmail, p.recoveryPassword)
+		}
+	})
+
+	t.Run("四段照常", func(t *testing.T) {
+		p := ParseLine("b@outlook.com----pw----"+guid+"----"+tok, DefaultSeparator)
+		if p.err != "" || p.token != tok {
+			t.Fatalf("四段格式应保持原样: err=%s token=%q", p.err, p.token)
+		}
+		if p.recoveryEmail != "" || p.recoveryPassword != "" {
+			t.Error("四段格式不该产生辅助邮箱")
+		}
+	})
+
+	t.Run("授权码含分隔符", func(t *testing.T) {
+		dirty := tok + "----" + "MIDDLE" + "----" + "TAIL"
+		p := ParseLine("c@outlook.com----pw----"+guid+"----"+dirty, DefaultSeparator)
+		if p.err != "" {
+			t.Fatalf("不该报错: %s", p.err)
+		}
+		// 第五段 MIDDLE 不是邮箱，因此整段都该还给授权码。
+		if p.token != dirty {
+			t.Errorf("授权码应原样保留，实际 %q", p.token)
+		}
+		if p.recoveryEmail != "" {
+			t.Errorf("不该识别出辅助邮箱，实际 %q", p.recoveryEmail)
+		}
+	})
+
+	t.Run("授权码含分隔符且末段像邮箱", func(t *testing.T) {
+		// 六段且第五段是合法邮箱 —— 按格式约定就该认成辅助邮箱。
+		// 这是规则的边界，写出来是为了说明取舍：宁可这种极端情况认错，
+		// 也不能让正常的六段格式认不出来。
+		p := ParseLine("d@outlook.com----pw----"+guid+"----"+tok+"----x@y.com----k", DefaultSeparator)
+		if p.recoveryEmail != "x@y.com" {
+			t.Errorf("应认成辅助邮箱，实际 %q", p.recoveryEmail)
+		}
+	})
+
+	t.Run("末尾空占位段", func(t *testing.T) {
+		p := ParseLine("e@outlook.com----pw----"+guid+"----"+tok+"----", DefaultSeparator)
+		if p.token != tok {
+			t.Errorf("末尾空段应被丢弃而不是接进授权码，实际 %q", p.token)
+		}
+		p2 := ParseLine("f@outlook.com----pw----"+guid+"----"+tok+"--------", DefaultSeparator)
+		if p2.token != tok {
+			t.Errorf("两个末尾空段同样应丢弃，实际 %q", p2.token)
+		}
+	})
+
+	t.Run("辅助邮箱密码可为空", func(t *testing.T) {
+		p := ParseLine("g@outlook.com----pw----"+guid+"----"+tok+"----rec@gmail.com----", DefaultSeparator)
+		if p.recoveryEmail != "rec@gmail.com" {
+			t.Errorf("应解析出辅助邮箱，实际 %q", p.recoveryEmail)
+		}
+		if p.recoveryPassword != "" {
+			t.Errorf("密码应为空，实际 %q", p.recoveryPassword)
+		}
+	})
+
+	t.Run("辅助邮箱大小写归一", func(t *testing.T) {
+		p := ParseLine("h@outlook.com----pw----"+guid+"----"+tok+"----REC@Gmail.COM----k", DefaultSeparator)
+		if p.recoveryEmail != "rec@gmail.com" {
+			t.Errorf("辅助邮箱应归一化，实际 %q", p.recoveryEmail)
+		}
+	})
+}

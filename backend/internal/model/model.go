@@ -99,6 +99,11 @@ type Account struct {
 	RefreshTokenEnc []byte       `json:"-"`
 	Tenant          string       `json:"tenant"`
 	Capabilities    Capabilities `json:"capabilities"`
+	// RecoveryEmail 是账号的辅助邮箱。它与密码同属账号资料而非取件所需，
+	// 因此不随列表下发 —— 邮箱地址本身就是可用于社工的线索。
+	RecoveryEmail string `json:"-"`
+	// RecoveryPasswordEnc 是辅助邮箱密码的密文。
+	RecoveryPasswordEnc []byte `json:"-"`
 	// ProxyID 是粘性绑定的出口。同一账号始终从同一 IP 出网，
 	// 看起来像位置稳定的真实用户；轮换 IP 本身就是风控信号。
 	ProxyID *int64 `json:"proxy_id"`
@@ -130,6 +135,8 @@ type Account struct {
 	// 列表靠它决定那一行要不要给出查看入口，否则没密码的账号也会显示一个
 	// 点开必然落空的按钮。零值同样必须序列化。
 	HasPassword bool `json:"has_password"`
+	// HasRecovery 同理，只说明有没有辅助邮箱可看。
+	HasRecovery bool `json:"has_recovery"`
 }
 
 // AccessToken 是某账号在某 scope 下缓存的访问令牌。

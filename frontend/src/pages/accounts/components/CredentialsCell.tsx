@@ -1,11 +1,12 @@
-import { EyeInvisibleOutlined, EyeOutlined, LockOutlined } from '@ant-design/icons';
-import { Button, Tooltip, Typography } from 'antd';
+import { EyeOutlined, LockOutlined, SafetyOutlined } from '@ant-design/icons';
+import { Button, Space, Tooltip, Typography } from 'antd';
 import { useState } from 'react';
-import { fetchAccountPassword, unlockSecrets } from '@/api/accounts';
+import { fetchAccountSecrets, unlockSecrets } from '@/api/accounts';
+import type { AccountSecrets } from '@/api/accounts';
 import { ApiError } from '@/api/request';
-import { CopyableText } from '@/components/common/CopyableText';
 import { useModal } from '@/components/modal';
 import { toast } from '@/lib/feedback';
+import { SecretsContent } from './SecretsContent';
 
 /**
  * 会话内的解锁到期时间 (Unix 秒)。
@@ -21,27 +22,35 @@ function stillUnlocked(): boolean {
   return unlockedUntil - 5 > Date.now() / 1000;
 }
 
-interface PasswordCellProps {
+interface CredentialsCellProps {
   accountId: string | number;
   email: string;
-  /** 导入时是否带了密码。为假时这一行没有可看的东西 */
   hasPassword: boolean;
+  hasRecovery: boolean;
 }
 
 /**
- * 账号密码单元格: 默认打码, 点击后在线取回明文。
+ * 凭据单元格。
  *
- * 密码不随列表下发, 每次展开都是一次单独的请求并在后端留下审计记录,
- * 因此这里不做任何跨行缓存 —— 一次点击对应一条"谁看了哪个账号"。
+ * 密码、辅助邮箱、辅助邮箱密码三样合成一个入口, 点击后在弹窗里一次给全,
+ * 而不是在表格里各占一列 —— 它们都是"偶尔要查一次"的东西, 常驻三列既挤,
+ * 又意味着敏感信息一直摆在屏幕上。
+ *
+ * 每次点开都是一次单独的请求, 并在后端留下一条审计记录, 因此不做跨行缓存。
  */
-export function PasswordCell({ accountId, email, hasPassword }: PasswordCellProps) {
+export function CredentialsCell({
+  accountId,
+  email,
+  hasPassword,
+  hasRecovery,
+}: CredentialsCellProps) {
   const modal = useModal();
-  const [value, setValue] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  if (!hasPassword) {
+  const nothing = !hasPassword && !hasRecovery;
+  if (nothing) {
     return (
-      <Tooltip title="该账号导入时没有带密码">
+      <Tooltip title="该账号导入时没有带密码与辅助邮箱">
         <Typography.Text type="secondary">—</Typography.Text>
       </Tooltip>
     );
@@ -50,7 +59,7 @@ export function PasswordCell({ accountId, email, hasPassword }: PasswordCellProp
   /** 弹出解锁框, 成功返回 true */
   const unlock = async (): Promise<boolean> => {
     const password = await modal.prompt({
-      title: '查看账号密码',
+      title: '查看账号凭据',
       target: email,
       intent: 'warning',
       description: '输入你的后台登录密码以解锁, 解锁后 15 分钟内查看其他账号不再重复要求。',
@@ -71,65 +80,59 @@ export function PasswordCell({ accountId, email, hasPassword }: PasswordCellProp
     }
   };
 
-  const handleReveal = async () => {
+  const show = (secrets: AccountSecrets) => {
+    void modal.show({
+      title: '账号凭据',
+      target: email,
+      width: 520,
+      content: <SecretsContent secrets={secrets} />,
+      closeText: '关闭',
+    });
+  };
+
+  const handleOpen = async () => {
     setLoading(true);
     try {
       // 先按"已解锁"直接取。没解锁时后端会回 403, 下面再补解锁流程 ——
       // 比先查一次状态少一个来回, 且以后端的判定为准。
       if (!stillUnlocked() && !(await unlock())) return;
       try {
-        const res = await fetchAccountPassword(accountId);
-        setValue(res.password);
+        show(await fetchAccountSecrets(accountId));
       } catch (error) {
         if (error instanceof ApiError && error.code === 403) {
           // 服务端认为没解锁 (会话换了, 或本地记的到期时间已过), 重来一次。
           unlockedUntil = 0;
           if (!(await unlock())) return;
-          const res = await fetchAccountPassword(accountId);
-          setValue(res.password);
+          show(await fetchAccountSecrets(accountId));
           return;
         }
         throw error;
       }
     } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : '读取密码失败');
+      toast.error(error instanceof ApiError ? error.message : '读取凭据失败');
     } finally {
       setLoading(false);
     }
   };
 
-  if (value !== null) {
-    return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', maxWidth: '100%' }}>
-        <CopyableText value={value} mono singleLine tip="复制密码" />
-        <Tooltip title="收起">
-          <Button
-            type="text"
-            size="small"
-            aria-label="收起密码"
-            icon={<EyeInvisibleOutlined />}
-            onClick={() => setValue(null)}
-          />
-        </Tooltip>
-      </span>
-    );
-  }
-
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <Typography.Text type="secondary" style={{ fontFamily: 'var(--app-font-mono)' }}>
-        ••••••••
-      </Typography.Text>
-      <Tooltip title={stillUnlocked() ? '显示密码' : '显示密码 (需先用登录密码解锁)'}>
+    <Space size={4}>
+      <Tooltip title={stillUnlocked() ? '查看凭据' : '查看凭据 (需先用登录密码解锁)'}>
         <Button
-          type="text"
           size="small"
-          aria-label="显示密码"
           loading={loading}
           icon={stillUnlocked() ? <EyeOutlined /> : <LockOutlined />}
-          onClick={() => void handleReveal()}
-        />
+          onClick={() => void handleOpen()}
+        >
+          查看
+        </Button>
       </Tooltip>
-    </span>
+      {/* 有辅助邮箱的账号单独标一下, 免得每一行都要点开才知道有没有 */}
+      {hasRecovery ? (
+        <Tooltip title="含辅助邮箱">
+          <SafetyOutlined style={{ opacity: 0.45 }} />
+        </Tooltip>
+      ) : null}
+    </Space>
   );
 }

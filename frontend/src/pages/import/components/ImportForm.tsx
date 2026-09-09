@@ -69,15 +69,28 @@ export function ImportForm({ loading, disabled, onPreview }: ImportFormProps) {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="每行一个账号, 字段顺序固定"
+        message="每行一个账号, 前四段必填, 辅助邮箱可选。两种写法可以混在同一批里"
         description={
           <Space direction="vertical" size={4}>
             <Typography.Text code style={{ fontSize: 13 }}>
               邮箱----密码----clientid----授权码
             </Typography.Text>
+            <Typography.Text code style={{ fontSize: 13 }}>
+              邮箱----密码----clientid----授权码----辅助邮箱----辅助邮箱密码
+            </Typography.Text>
             <Typography.Text type="secondary">
               授权码即 OAuth2 refresh_token。默认分隔符为四个连字符 <Typography.Text code>----</Typography.Text>,
               如果导入源使用其它分隔符, 可在下方修改。空行会被跳过, 其余每一行都会尝试解析。
+            </Typography.Text>
+            <Typography.Text type="secondary">
+              {/*
+                授权码是不透明串, 里面出现分隔符完全可能。因此六段格式的判据是
+                第五段必须是合法邮箱, 认不出来就把多切的部分原样还给授权码 ——
+                宁可少认一种格式, 也不要把授权码截断成一个用起来必然失败的值。
+              */}
+              后两段是可选的, 有就写、没有就按四段写, 同一批里混着也没关系。
+              识别靠第五段是不是合法邮箱, 所以授权码里含分隔符也不会被误切；
+              辅助邮箱密码同样可以留空。
             </Typography.Text>
           </Space>
         }

@@ -16,7 +16,7 @@ import { TagList } from '@/components/common/TagList';
 import { formatUnixShort, daysFromNow, formatCountdown } from '@/utils/time';
 import { truncate } from '@/utils/text';
 import { EllipsisText } from '@/components/common/EllipsisText';
-import { PasswordCell } from './PasswordCell';
+import { CredentialsCell } from './CredentialsCell';
 
 /**
  * 行操作回调集合。
@@ -75,8 +75,8 @@ function renderLease(account: Account) {
  * useVisibleColumns 依次纳入, 装不下就不显示。
  */
 export const COLUMN_BUDGET = [
-  // 密码排在最前: 它是要人挨个点开抄走的东西, 一旦被挤掉这个功能就等于没有。
-  { key: 'password', width: 148 },
+  // 凭据排在最前: 它是要人挨个点开抄走的东西, 一旦被挤掉这个功能就等于没有。
+  { key: 'credentials', width: 108 },
   { key: 'capabilities', width: 156 },
   { key: 'next_rotate', width: 92 },
   { key: 'category', width: 96 },
@@ -129,18 +129,21 @@ export function buildAccountColumns(
         </Space>
       ),
     },
-    ...(show('password')
+    ...(show('credentials')
       ? ([
       {
-        // 明文不随列表下发, 这里渲染的只是打码占位与一个展开入口。
-        title: '密码',
-        key: 'password',
-        width: 148,
+        // 明文一律不随列表下发, 这里只有一个展开入口。
+        // 密码、辅助邮箱、辅助邮箱密码合成一列: 三样都是"偶尔查一次"的东西,
+        // 各占一列既挤, 又意味着敏感信息一直摆在屏幕上。
+        title: '凭据',
+        key: 'credentials',
+        width: 108,
         render: (_, record) => (
-          <PasswordCell
+          <CredentialsCell
             accountId={record.id}
             email={record.email}
             hasPassword={record.has_password}
+            hasRecovery={record.has_recovery}
           />
         ),
       },

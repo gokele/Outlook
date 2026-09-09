@@ -32,12 +32,14 @@
   "last_fetch_at": 0, "last_error": "",
   "disabled": false, "created_at": 1757200000,
   "leased_until": 0,                     // 非 0 表示被租约占用
-  "has_password": false                  // 导入时是否带了密码，只是标记
+  "has_password": false,                 // 导入时是否带了密码，只是标记
+  "has_recovery": false                  // 是否带了辅助邮箱，同样只是标记
 }
 ```
 
-绝不返回 `refresh_token`、`password` 或它们的密文字段。
-`has_password` 只说明这一行有没有密码可查，明文要单独调 `GET /api/admin/accounts/{id}/password`。
+绝不返回 `refresh_token`、`password`、`recovery_email`、`recovery_password` 或它们的密文字段。
+**辅助邮箱也不下发**——邮箱地址本身就是可用于社工的线索。
+两个 `has_*` 只说明这一行有没有东西可查，明文要单独调 `GET /api/admin/accounts/{id}/password`。
 
 `category_name`、`tags`、`leased_until`、`has_password` 是填充的展示字段，**零值时也必定存在**，
 不会因为空而消失，`tags` 始终是数组而非 `null`。列表、单账号读取与 PATCH 返回三者形状一致。
@@ -150,7 +152,7 @@ curl -H "Authorization: Bearer okc_xxx" \
 | `PATCH /api/admin/accounts/{id}` | `{category_id?, clear_category?, note?, channel_policy?, disabled?, tags?}` |
 | `POST /api/admin/accounts/{id}/verify` | 手动轮换，返回 `{account, ok, error?}` |
 | `POST /api/admin/accounts/unlock-secrets` | `{password}` 为当前登录密码。通过后本会话 15 分钟内可查看明文密码，返回 `{unlocked_until}`。密码错误返回 403 `CONFIRM_REQUIRED` |
-| `GET /api/admin/accounts/{id}/password` | 返回 `{password}` 明文。未解锁返回 403 `CONFIRM_REQUIRED`，导入时没带密码返回 404 `NO_PASSWORD`。**每次调用都写一条 `trigger=reveal` 的审计日志** |
+| `GET /api/admin/accounts/{id}/password` | 返回 `{password, recovery_email, recovery_password}` 三样明文，缺的那项为空串、字段本身始终存在。未解锁返回 403 `CONFIRM_REQUIRED`，三样都没有返回 404 `NO_SECRET`。**每次调用只写一条 `trigger=reveal` 的审计日志**——界面上它们是同一个弹窗的内容，拆开取会把「看了一次」记成三次 |
 | `POST /api/admin/accounts/batch/verify` | **同步接口**，返回 `{ok, fail}`。单批上限 20，超过返回 `BATCH_TOO_LARGE`。更大的量交给调度器 |
 | `POST /api/admin/accounts/batch/update` / `batch/delete` | 批量改与删 |
 | `POST /api/admin/import` | 见下 |
@@ -185,6 +187,18 @@ curl -H "Authorization: Bearer okc_xxx" \
 | `POST /api/admin/update/apply` | `{confirm_password}` 下载、校验并替换二进制，随后自动重启。返回 `{ok, installed, backup, restarting, message}`。开发版或未配 `UPDATE_REPO` 时返回 400 `UPDATE_DISABLED`，已是最新返回 400 `ALREADY_LATEST` |
 
 ### 导入
+
+导入文本每行一个账号，支持两种格式，可以混在同一批里：
+
+```
+邮箱----密码----clientid----授权码
+邮箱----密码----clientid----授权码----辅助邮箱----辅助邮箱密码
+```
+
+**六段格式的判据是第五段必须是合法邮箱**，不是看总段数。授权码是不透明串，
+里面出现 `----` 完全可能；认不出六段就把多切的部分原样接回授权码——
+宁可少认一种格式，也不要把授权码截断成一个看起来正常、用起来必然失败的值。
+辅助邮箱密码可以留空。
 
 ```jsonc
 // POST /api/admin/import

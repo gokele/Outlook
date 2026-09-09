@@ -79,7 +79,12 @@ func (s *Server) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, map[string]any{"unlocked_until": until})
 }
 
-// handleRevealPassword 返回单个账号的明文密码。
+// handleRevealPassword 返回单个账号的全部明文凭据：
+// 账号密码、辅助邮箱与辅助邮箱密码。
+//
+// 三样一次给全而不是各开一个接口：它们在界面上是同一个弹窗里的内容，
+// 拆成三次请求会写出三条审计日志，把"看了一次这个账号"记成三次。
+//
 // GET /api/admin/accounts/{id}/password
 func (s *Server) handleRevealPassword(w http.ResponseWriter, r *http.Request) {
 	token := sessionToken(r)
@@ -103,17 +108,39 @@ func (s *Server) handleRevealPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, mapStoreError(err), s.log)
 		return
 	}
-	// 导入时密码字段可以为空，此时库里就没有这一份数据。
-	if len(acc.PasswordEnc) == 0 {
-		writeError(w, r, newAPIError(404, "NO_PASSWORD", "该账号导入时没有带密码"), s.log)
+	// 三样都可以是空的：四段格式导入的账号没有辅助邮箱，密码字段也允许留空。
+	// 全空才算"没什么可看"，否则有几样给几样。
+	if len(acc.PasswordEnc) == 0 && acc.RecoveryEmail == "" && len(acc.RecoveryPasswordEnc) == 0 {
+		writeError(w, r, newAPIError(404, "NO_SECRET", "该账号导入时没有带密码与辅助邮箱"), s.log)
 		return
 	}
-	pw, err := s.box.Decrypt(acc.PasswordEnc)
-	if err != nil {
-		s.auditSecretAccess(id, "error", "DECRYPT_FAILED")
-		writeError(w, r, newAPIError(500, "INTERNAL", "密码解密失败，主密钥可能已更换"), s.log)
-		return
+
+	out := map[string]any{
+		// 零值也要给：字段忽有忽无会让前端按可选字段处理，
+		// 而"有这个账号但密码为空"和"字段没返回"是两回事。
+		"password":          "",
+		"recovery_email":    acc.RecoveryEmail,
+		"recovery_password": "",
 	}
+	if len(acc.PasswordEnc) > 0 {
+		pw, err := s.box.Decrypt(acc.PasswordEnc)
+		if err != nil {
+			s.auditSecretAccess(id, "error", "DECRYPT_FAILED")
+			writeError(w, r, newAPIError(500, "INTERNAL", "密码解密失败，主密钥可能已更换"), s.log)
+			return
+		}
+		out["password"] = pw
+	}
+	if len(acc.RecoveryPasswordEnc) > 0 {
+		rp, err := s.box.Decrypt(acc.RecoveryPasswordEnc)
+		if err != nil {
+			s.auditSecretAccess(id, "error", "DECRYPT_FAILED")
+			writeError(w, r, newAPIError(500, "INTERNAL", "辅助邮箱密码解密失败，主密钥可能已更换"), s.log)
+			return
+		}
+		out["recovery_password"] = rp
+	}
+
 	s.auditSecretAccess(id, "ok", "")
-	writeJSON(w, r, map[string]any{"password": pw})
+	writeJSON(w, r, out)
 }

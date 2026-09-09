@@ -18,7 +18,7 @@ var ErrNotFound = errors.New("记录不存在")
 const accountCols = `a.id, a.email, a.password_enc, a.client_id, a.refresh_token_enc, a.tenant,
  a.capabilities, a.channel_policy, a.category_id, a.note, a.status, a.token_refreshed_at,
  a.token_expires_at, a.next_rotate_at, a.rotate_fail_count, a.last_fetch_at, a.last_error,
- a.disabled, a.created_at`
+ a.disabled, a.created_at, a.recovery_email, a.recovery_password_enc`
 
 // scanAccount 从一行结果读出账号。capabilities 以 TEXT 存 JSON，在这里解开。
 func scanAccount(sc interface{ Scan(...any) error }) (*model.Account, error) {
@@ -26,16 +26,17 @@ func scanAccount(sc interface{ Scan(...any) error }) (*model.Account, error) {
 	var caps string
 	var catID sql.NullInt64
 	var disabled int
-	var pwd, rt []byte
+	var pwd, rt, recPwd []byte
 	err := sc.Scan(&a.ID, &a.Email, &pwd, &a.ClientID, &rt, &a.Tenant,
 		&caps, &a.ChannelPolicy, &catID, &a.Note, &a.Status, &a.TokenRefreshedAt,
 		&a.TokenExpiresAt, &a.NextRotateAt, &a.RotateFailCount, &a.LastFetchAt, &a.LastError,
-		&disabled, &a.CreatedAt)
+		&disabled, &a.CreatedAt, &a.RecoveryEmail, &recPwd)
 	if err != nil {
 		return nil, err
 	}
-	a.PasswordEnc, a.RefreshTokenEnc = pwd, rt
+	a.PasswordEnc, a.RefreshTokenEnc, a.RecoveryPasswordEnc = pwd, rt, recPwd
 	a.HasPassword = len(pwd) > 0
+	a.HasRecovery = a.RecoveryEmail != "" || len(recPwd) > 0
 	a.Disabled = disabled != 0
 	if catID.Valid {
 		v := catID.Int64
@@ -160,15 +161,16 @@ func (s *Store) ListAccounts(ctx context.Context, f AccountFilter) ([]*model.Acc
 		var catID sql.NullInt64
 		var catName sql.NullString
 		var disabled int
-		var pwd, rt []byte
+		var pwd, rt, recPwd []byte
 		if err := rows.Scan(&a.ID, &a.Email, &pwd, &a.ClientID, &rt, &a.Tenant,
 			&caps, &a.ChannelPolicy, &catID, &a.Note, &a.Status, &a.TokenRefreshedAt,
 			&a.TokenExpiresAt, &a.NextRotateAt, &a.RotateFailCount, &a.LastFetchAt, &a.LastError,
-			&disabled, &a.CreatedAt, &catName, &a.LeasedUntil); err != nil {
+			&disabled, &a.CreatedAt, &a.RecoveryEmail, &recPwd, &catName, &a.LeasedUntil); err != nil {
 			return nil, 0, err
 		}
-		a.PasswordEnc, a.RefreshTokenEnc = pwd, rt
+		a.PasswordEnc, a.RefreshTokenEnc, a.RecoveryPasswordEnc = pwd, rt, recPwd
 		a.HasPassword = len(pwd) > 0
+		a.HasRecovery = a.RecoveryEmail != "" || len(recPwd) > 0
 		a.Disabled = disabled != 0
 		if catID.Valid {
 			v := catID.Int64
@@ -230,12 +232,12 @@ func (s *Store) InsertAccount(ctx context.Context, a *model.Account) (int64, err
 	q := `INSERT INTO accounts (email, password_enc, client_id, refresh_token_enc, tenant,
 	       capabilities, channel_policy, category_id, note, status, token_refreshed_at,
 	       token_expires_at, next_rotate_at, rotate_fail_count, last_fetch_at, last_error,
-	       disabled, created_at)
-	      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	       disabled, created_at, recovery_email, recovery_password_enc)
+	      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 	args := []any{NormalizeEmail(a.Email), a.PasswordEnc, a.ClientID, a.RefreshTokenEnc, a.Tenant,
 		string(caps), a.ChannelPolicy, a.CategoryID, a.Note, a.Status, a.TokenRefreshedAt,
 		a.TokenExpiresAt, a.NextRotateAt, a.RotateFailCount, a.LastFetchAt, a.LastError,
-		boolInt(a.Disabled), a.CreatedAt}
+		boolInt(a.Disabled), a.CreatedAt, a.RecoveryEmail, a.RecoveryPasswordEnc}
 	return s.insertReturningID(ctx, q, args...)
 }
 

@@ -166,14 +166,24 @@ export function unlockSecrets(password: string) {
   });
 }
 
+/** 一个账号的全部明文凭据。缺失的项为空串, 字段本身始终存在 */
+export interface AccountSecrets {
+  password: string;
+  recovery_email: string;
+  recovery_password: string;
+}
+
 /**
- * 读取单个账号的明文密码。
+ * 读取单个账号的明文凭据: 账号密码、辅助邮箱与辅助邮箱密码。
  *
- * 未解锁返回 403, 账号导入时没带密码返回 404 —— 两种都由调用方自行处理,
+ * 三样一次取全而不是分开取 —— 它们在界面上是同一个弹窗的内容,
+ * 拆成三次请求会写出三条审计日志, 把"看了一次这个账号"记成三次。
+ *
+ * 未解锁返回 403, 三样都没有返回 404 —— 两种都由调用方自行处理,
  * 因此静默, 不走全局错误 toast。
  */
-export function fetchAccountPassword(id: string | number) {
-  return request<{ password: string }>(`/admin/accounts/${id}/password`, { silent: true });
+export function fetchAccountSecrets(id: string | number) {
+  return request<AccountSecrets>(`/admin/accounts/${id}/password`, { silent: true });
 }
 
 /** 导出账号文件, 由浏览器直接落盘 */

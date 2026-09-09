@@ -61,6 +61,8 @@ export interface Account {
    * /admin/accounts/{id}/password, 且本次会话必须先解锁。
    */
   has_password: boolean;
+  /** 导入时是否带了辅助邮箱。辅助邮箱本身同样不随列表下发 */
+  has_recovery: boolean;
 }
 
 /** 后台登录用户 */

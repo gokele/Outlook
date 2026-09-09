@@ -88,7 +88,10 @@ type parsed struct {
 	password string
 	clientID string
 	token    string
-	err      string
+	// 以下两项来自六段格式，四段格式里为空。
+	recoveryEmail    string
+	recoveryPassword string
+	err              string
 }
 
 var (
@@ -107,10 +110,18 @@ func New(st *store.Store, box *crypto.Box) *Importer {
 	return &Importer{st: st, box: box}
 }
 
-// ParseLine 解析一行。格式为四段：邮箱----密码----clientid----授权码。
+// ParseLine 解析一行。支持两种格式：
 //
-// 按前三个分隔符切分，其余全部视为授权码。授权码本身可能含连字符，
-// 若按全部分隔符切分会被误切。
+//	邮箱----密码----clientid----授权码
+//	邮箱----密码----clientid----授权码----辅助邮箱----辅助邮箱密码
+//
+// 难点在于授权码本身可能含 ---- —— 微软的 refresh_token 是不透明串，
+// 里面出现分隔符完全可能。因此不能简单地按分隔符切成六段。
+//
+// 规则是：前三个分隔符照切，剩下的部分再看能不能认出六段格式，
+// 判据是**第五段必须是一个合法邮箱**。认不出来就把多切的部分原样接回
+// 授权码 —— 宁可少认一种格式，也不要把授权码截断成一个看起来正常、
+// 用起来必然失败的值。
 func ParseLine(raw, sep string) parsed {
 	p := parsed{raw: raw}
 	s := strings.TrimSpace(strings.TrimPrefix(raw, "\ufeff"))
@@ -121,7 +132,7 @@ func ParseLine(raw, sep string) parsed {
 	if sep == "" {
 		sep = DefaultSeparator
 	}
-	parts := strings.SplitN(s, sep, 4)
+	parts := strings.SplitN(s, sep, 6)
 	if len(parts) < 4 {
 		p.err = fmt.Sprintf("字段不足 4 段，实际 %d 段", len(parts))
 		return p
@@ -129,7 +140,24 @@ func ParseLine(raw, sep string) parsed {
 	p.email = store.NormalizeEmail(parts[0])
 	p.password = strings.TrimSpace(parts[1])
 	p.clientID = strings.TrimSpace(parts[2])
-	p.token = strings.TrimSpace(parts[3])
+
+	// 判据只看第五段是不是合法邮箱，不看总段数 —— 辅助邮箱密码可以为空
+	// （写成 ...----rec@gmail.com---- 或直接省略），那时总段数是 5 或 6。
+	if len(parts) >= 5 && emailRe.MatchString(store.NormalizeEmail(parts[4])) {
+		p.token = strings.TrimSpace(parts[3])
+		p.recoveryEmail = store.NormalizeEmail(parts[4])
+		if len(parts) == 6 {
+			p.recoveryPassword = strings.TrimSpace(parts[5])
+		}
+	} else {
+		// 认不出六段格式：多切出来的段原样接回授权码。
+		// 接回前先去掉末尾的空占位段，否则 ...----token---- 会变成 token----。
+		tail := parts[3:]
+		for len(tail) > 1 && tail[len(tail)-1] == "" {
+			tail = tail[:len(tail)-1]
+		}
+		p.token = strings.TrimSpace(strings.Join(tail, sep))
+	}
 
 	switch {
 	case !emailRe.MatchString(p.email):
@@ -294,16 +322,25 @@ func (im *Importer) upsert(ctx context.Context, p parsed, req Request, now int64
 			return "", "", err
 		}
 	}
+	// 辅助邮箱的密码与账号密码同级敏感，同样加密存。
+	var recPwEnc []byte
+	if p.recoveryPassword != "" {
+		if recPwEnc, err = im.box.Encrypt(p.recoveryPassword); err != nil {
+			return "", "", err
+		}
+	}
 
 	acc := &model.Account{
-		Email:           p.email,
-		PasswordEnc:     pwEnc,
-		ClientID:        p.clientID,
-		RefreshTokenEnc: rtEnc,
-		Tenant:          req.Tenant,
-		ChannelPolicy:   "auto",
-		CategoryID:      req.CategoryID,
-		Status:          model.StatusUnverified,
+		Email:               p.email,
+		PasswordEnc:         pwEnc,
+		RecoveryEmail:       p.recoveryEmail,
+		RecoveryPasswordEnc: recPwEnc,
+		ClientID:            p.clientID,
+		RefreshTokenEnc:     rtEnc,
+		Tenant:              req.Tenant,
+		ChannelPolicy:       "auto",
+		CategoryID:          req.CategoryID,
+		Status:              model.StatusUnverified,
 		// 导入即进入首验队列，但不在这里发起任何请求。
 		NextRotateAt: now,
 		CreatedAt:    now,
