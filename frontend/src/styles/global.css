@@ -13,6 +13,15 @@ body,
 body {
   margin: 0;
   -webkit-font-smoothing: antialiased;
+  /*
+   * 整页不允许横向滚动。
+   *
+   * 这是兜底而不是解决办法：真正的修法是让每个可能装下长内容的容器
+   * 自己收缩或滚动。但漏掉一处的代价很难看 —— 整个页面被一条 URL 顶偏，
+   * 侧栏和头部跟着错位。这条规则保证最坏情况只是内容被截断，
+   * 而不是整个界面走形。
+   */
+  overflow-x: hidden;
 }
 
 /* 被禁用或已吊销的行整体降透明度, 与状态标签共同表达"不可用" */
@@ -279,6 +288,18 @@ body {
     opacity: 1;
     transform: scaleX(1);
   }
+}
+
+/*
+ * Collapse 头部允许收缩。
+ *
+ * 头部是 flex 容器，子项默认 min-width:auto —— 不得收缩到比内容更窄。
+ * 邮件摘要里常有没有空格的长 URL，遇上这条规则就会把整张卡片撑破，
+ * 横向溢出到视口之外。这里放开约束，里面的省略才有机会生效。
+ */
+.ant-collapse-header .ant-collapse-header-text {
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* 单行省略: 配合 tableLayout="fixed" 的表格单元格使用, 悬浮完整内容由 EllipsisText 包一层 Tooltip */

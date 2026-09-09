@@ -80,7 +80,7 @@ export function MailPanel({ accountId, disabled, disabledReason }: MailPanelProp
         </Space>
       }
     >
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <Space direction="vertical" size={12} style={{ width: '100%', minWidth: 0 }}>
         <Segmented
           block
           value={tab}
@@ -103,7 +103,7 @@ export function MailPanel({ accountId, disabled, disabledReason }: MailPanelProp
             skeletonRows={6}
           >
             {data ? (
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              <Space direction="vertical" size={12} style={{ width: '100%', minWidth: 0 }}>
                 <CoverageNotice result={data} tab={tab} />
                 <Spin spinning={isFetching} tip="正在在线获取邮件…">
                   <MailList

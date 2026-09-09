@@ -94,6 +94,7 @@ CI 目前只做打包构建、不跑测试（见 `.github/workflows/release.yml`
 - **不显示下载百分比**（`pages/update`）：下载发生在服务端，浏览器根本拿不到进度，编一个进度条只会让人误判还要等多久。用不定进度条如实表达"在做，但不知道还要多久"。
 - **重启目标必须在替换二进制之前捕获**（`internal/httpapi/update.go` 的 `execPath`）：Linux 的 `os.Executable()` 读 `/proc/self/exe`，跟随的是 inode 而不是路径。安装后原路径指向新 inode，旧 inode 仍被备份文件引用，此时再问会得到备份路径，`execve` 于是把旧版本重新拉起来——进程号没变、服务也在，唯独版本没动，表现就是"更新完还得手动重启"。这个坑踩过一次，`TestApplyKeepsOriginalPath` 钉着它。
 - **替换二进制的方式按平台分开**（`install_unix.go` / `install_windows.go`）：Unix 直接 rename 覆盖，内核按 inode 引用运行中的映像，因此原路径一刻都不会消失；Windows 不允许覆盖运行中的 exe，只能先把自己改名让路，放不回去时要改回来。备份在 Unix 上用硬链接，不额外占十几 MB。
+- **flex 容器里装长内容必须给 `min-width: 0`**：flex 子项默认 `min-width: auto`，意为"不得收缩到比内容更窄"。邮件摘要里一条没有空格的长 URL 就能把整张卡片撑破、横向溢出到视口之外。`Typography.Text` 的 `ellipsis` 救不了——它只设 `white-space: nowrap`，元素本身仍是行内的、宽度由内容撑开，省略号根本没机会出现。要用块级省略（`EllipsisText`，`display:block` + `overflow:hidden`）。`body` 上的 `overflow-x: hidden` 只是兜底，不是解决办法：漏掉一处的代价是整个界面被一条 URL 顶偏。
 - **每一个校验登录密码的入口都必须限速**（`httpapi.guardPassword`）：改密、改名、解锁凭据、含令牌导出、安装更新都在校验同一个密码，**只要有一处漏了限速，前面所有防护就都被绕开**——攻击者挑那个没设防的接口猜就行。`TestNoUnguardedPasswordCheck` 静态扫描源码钉住这条。错误码由调用方各自给：那是对外契约的一部分，不该为了内部复用而统一。
 - **限速要在密码校验之前生效**：被挡下的请求不该消耗一次 PBKDF2（21 万次迭代），否则限速本身就成了打垮服务的手段。
 - **按用户名的封禁上限必须远小于按 IP 的**（`maxUserBlock` 60 秒 vs `maxIPBlock` 15 分钟）：按用户名封是双刃剑——攻击者只要不停用正确的用户名试错误密码，就能把真正的管理员一起锁在门外，**拒绝服务比爆破更容易达成**。这一维只做"拖慢到不划算"，不做长时间封禁。

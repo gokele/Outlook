@@ -69,7 +69,7 @@ export function MailBody({ html, text }: MailBodyProps) {
   }
 
   return (
-    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+    <Space direction="vertical" size={8} style={{ width: '100%', minWidth: 0 }}>
       <Space size={12} wrap>
         <Segmented
           size="small"
