@@ -33,7 +33,8 @@ frontend/         React 19 + Vite + TanStack Router/Query + Ant Design 5
 .github/workflows/ Release：推标签即交叉编译四平台并发布
 ```
 
-systemd unit 与反代配置尚未纳入版本库，待补。
+进程守护与反代不进版本库：与具体发行版、反代软件和证书方案强耦合，
+给模板多半还是要改。
 
 ## 偏离默认规范的地方
 
