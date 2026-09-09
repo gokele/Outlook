@@ -23,10 +23,13 @@ backend/web/dist/*
 
 # 环境变量文件里有加密主密钥，绝不能提交。
 # .env 单独列出：*.env 的通配是否覆盖以点开头的文件不值得赌。
+#
+# 模板文件叫 env.example 而不是 .env.example：带点的文件在 Finder、ls 与
+# 不少编辑器里默认不显示，放在仓库里等于没放。它不以 .env 结尾，
+# 因此上面几条通配都匹配不到，不需要额外的否定规则。
 .env
 api.env
 *.env
-!backend/.env.example
 
 .DS_Store
 *.log

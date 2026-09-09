@@ -51,7 +51,7 @@ systemd unit 与反代配置尚未纳入版本库，待补。
 
 ```bash
 cd backend
-cp .env.example .env        # 首次: 本地配置, 已被 gitignore
+cp ../env.example .env      # 首次: 本地配置, 已被 gitignore
 go run .                    # 默认用 ./data/app.db，首次启动会打印随机管理员密码
 go test ./...
 

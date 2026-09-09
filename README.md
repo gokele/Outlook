@@ -15,6 +15,9 @@ Outlook 账号池的管理与取件系统。批量导入账号，按需在线取
 ## 快速开始（本地）
 
 ```bash
+# 配置。模板见仓库根目录的 env.example，直接跑也行，全部有默认值。
+cp env.example backend/.env
+
 # 后端。默认用 SQLite，不需要装任何数据库服务。
 cd backend
 go run .
@@ -26,6 +29,8 @@ cd frontend
 npm install
 npm run dev        # 打开 http://localhost:5173
 ```
+
+全部配置项与各自的取舍见 [env.example](env.example)，那是唯一一份配置说明。
 
 ## 导入格式
 
