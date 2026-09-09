@@ -1,0 +1,142 @@
+:root {
+  /* 等宽字体令牌: 用于 id、密钥、验证码等需要逐字符核对的内容 */
+  --app-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 被禁用或已吊销的行整体降透明度, 与状态标签共同表达"不可用" */
+.row-disabled > td {
+  opacity: 0.6;
+}
+
+/* 表格内的操作按钮组在窄屏下允许换行, 避免撑破布局 */
+.ant-table-wrapper .ant-table-cell .ant-space-item {
+  min-width: 0;
+}
+
+/* ---------------- 导航反馈与页面切换动效 ---------------- */
+
+/*
+ * 顶部导航进度条。
+ * 路由要等 1 秒才显示 pendingComponent, 这条进度条负责填补那段空白,
+ * 让点击立刻有回应而不必把内容区换成加载态。
+ */
+.okc-nav-progress {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  z-index: 1000;
+  height: 2px;
+  width: 100%;
+  border-end-end-radius: 2px;
+  pointer-events: none;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  opacity: 0;
+}
+
+/*
+ * 爬升曲线"先冲后缓": 前 150ms 冲到六成, 之后越走越慢停在 90%。
+ * 真实耗时事先不知道, 匀速会在快的时候显得拖沓、慢的时候提前撞线。
+ */
+@keyframes okc-progress-grow {
+  from {
+    opacity: 1;
+    transform: scaleX(0);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(0.9);
+  }
+}
+
+/* 跳转完成: 补满再淡出。从半途直接收回会看成进度倒退。 */
+@keyframes okc-progress-finish {
+  from {
+    opacity: 1;
+    transform: scaleX(0.9);
+  }
+  55% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+  to {
+    opacity: 0;
+    transform: scaleX(1);
+  }
+}
+
+.okc-nav-progress[data-state='loading'] {
+  animation: okc-progress-grow 1.6s cubic-bezier(0.04, 0.72, 0.16, 1) forwards;
+}
+
+.okc-nav-progress[data-state='done'] {
+  animation: okc-progress-finish 0.34s ease-out forwards;
+}
+
+/* 页面入场: 轻微上移淡入。只动 transform 与 opacity, 不触发重排。 */
+@keyframes okc-route-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.okc-route-enter {
+  animation: okc-route-in 0.26s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+/* 表格行悬浮时轻微提亮, 配合 antd 自带的底色变化让指向更明确 */
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  transition: background-color 0.18s ease;
+}
+
+/* 用户偏好减少动效时, 关闭弹窗、遮罩与页面切换的全部动画 */
+@media (prefers-reduced-motion: reduce) {
+  .ant-modal,
+  .ant-modal-mask,
+  .ant-modal-wrap,
+  .ant-zoom-enter,
+  .ant-zoom-appear,
+  .ant-zoom-leave,
+  .ant-fade-enter,
+  .ant-fade-appear,
+  .ant-fade-leave,
+  .okc-route-enter,
+  .okc-nav-progress {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /*
+   * 进度条在减少动效下仍然要能看见 —— 它是"正在跳转"的唯一提示,
+   * 关掉动画不等于关掉反馈, 因此这里让它直接整条显示而不是滑入。
+   */
+  .okc-nav-progress[data-state='loading'] {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+/* 单行省略: 配合 tableLayout="fixed" 的表格单元格使用, 悬浮完整内容由 EllipsisText 包一层 Tooltip */
+.okc-ellipsis {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

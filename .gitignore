@@ -1,0 +1,21 @@
+# 构建产物
+dist/
+backend/data/
+backend/logs/
+frontend/dist/
+frontend/node_modules/
+
+# 本地开发数据库。SQLite 只用于开发与测试，不应进版本库。
+*.db
+*.db-shm
+*.db-wal
+
+# 环境变量文件里有加密主密钥，绝不能提交。
+# .env 单独列出：*.env 的通配是否覆盖以点开头的文件不值得赌。
+.env
+api.env
+*.env
+!backend/.env.example
+
+.DS_Store
+*.log

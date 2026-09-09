@@ -1,0 +1,203 @@
+/*
+ * 统一弹窗的布局结构与动效。
+ * 注意: 凡是会与 antd 运行时注入样式冲突的关键视觉 (圆角 / 阴影 / 遮罩 /
+ * 图标底座配色 / 标题字号 / 按钮尺寸) 都写在组件内联里 —— antd 的样式注入晚于
+ * 静态 CSS, 类名优先级打平时 antd 获胜, 写在这里等于没写。
+ * 本文件只保留没有 antd 对手的纯布局规则与 keyframe 动画。
+ */
+
+.body {
+  padding: 28px 28px 24px;
+}
+
+/* 横向头部: 图标底座与标题同行, 视觉重心集中 */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.badge {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+}
+
+.titleWrap {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.title {
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+
+/* 被操作对象: 等宽胶囊, 与标题同行放不下时自动换行 */
+.target {
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-family: var(--app-font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.description {
+  margin: 16px 0 0;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+/* 后果清单: 浅色卡片, 逐条意图图标 */
+.consequences {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 14px 16px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.consequenceItem {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/*
+ * 图标与首行文字视觉居中: 行高盒为 13px * 1.7 ≈ 22.1px, 居中位置 (22.1 - 14) / 2,
+ * 上提 1px 做光学补偿。
+ */
+.rowIcon {
+  flex: none;
+  font-size: 14px;
+  margin-top: calc((13px * 1.7 - 14px) / 2 - 1px);
+}
+
+.field {
+  margin-top: 16px;
+}
+
+.fieldLabel {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 28px;
+}
+
+.btn {
+  font-size: 14px;
+}
+
+.btnPrimary {
+  min-width: 96px;
+}
+
+/* 窄屏: 按钮纵向排列并占满宽度, column-reverse 让主按钮落在上方 */
+@media (max-width: 575px) {
+  .body {
+    padding: 24px 20px 20px;
+  }
+
+  .header {
+    align-items: flex-start;
+  }
+
+  .footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 8px;
+  }
+}
+
+/*
+ * 入场/退场动效。
+ * rc-motion 按 transitionName 拼接类名, 因此这里必须使用全局类名而非 CSS Modules 的哈希类名。
+ */
+:global(.confirm-zoom-enter),
+:global(.confirm-zoom-appear) {
+  opacity: 0;
+  transform: scale(0.96) translateY(6px);
+}
+
+:global(.confirm-zoom-enter-active),
+:global(.confirm-zoom-appear-active) {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  transition:
+    opacity 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:global(.confirm-zoom-leave) {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
+:global(.confirm-zoom-leave-active) {
+  opacity: 0;
+  transform: scale(0.98) translateY(2px);
+  transition:
+    opacity 150ms ease-in,
+    transform 150ms ease-in;
+}
+
+:global(.confirm-fade-enter),
+:global(.confirm-fade-appear) {
+  opacity: 0;
+}
+
+:global(.confirm-fade-enter-active),
+:global(.confirm-fade-appear-active) {
+  opacity: 1;
+  transition: opacity 200ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+:global(.confirm-fade-leave) {
+  opacity: 1;
+}
+
+:global(.confirm-fade-leave-active) {
+  opacity: 0;
+  transition: opacity 150ms ease-in;
+}
+
+/* 偏好减少动效时只保留淡入淡出, 去掉位移与缩放 */
+@media (prefers-reduced-motion: reduce) {
+  :global(.confirm-zoom-enter),
+  :global(.confirm-zoom-appear) {
+    transform: none;
+  }
+
+  :global(.confirm-zoom-enter-active),
+  :global(.confirm-zoom-appear-active) {
+    transform: none;
+    transition: opacity 120ms linear;
+  }
+
+  :global(.confirm-zoom-leave-active) {
+    transform: none;
+    transition: opacity 100ms linear;
+  }
+}
