@@ -30,7 +30,7 @@ backend/          Go API 服务
     updater/      从 GitHub Releases 拉新版、校验散列、替换二进制与重启
   web/            前端产物的 go:embed 封装与单页应用静态服务
 frontend/         React 19 + Vite + TanStack Router/Query + Ant Design 5
-.github/workflows/ CI（跑 PostgreSQL）与 Release（交叉编译四平台）
+.github/workflows/ Release：推标签即交叉编译四平台并发布
 ```
 
 systemd unit 与反代配置尚未纳入版本库，待补。
@@ -59,8 +59,16 @@ cd frontend
 npm install && npm run dev  # 代理 /api 到 127.0.0.1:8080
 ```
 
-开发用 SQLite，生产用 PostgreSQL。这个差异的代价是并发与锁的语义在 SQLite 上无法验证，
-因此**持续集成必须跑 PostgreSQL 的集成测试，只跑 SQLite 的测试通过不算通过**。
+开发用 SQLite，生产用 PostgreSQL。这个差异的代价是并发与锁的语义在 SQLite 上无法验证：
+`FOR UPDATE SKIP LOCKED` 在 SQLite 上根本不存在，调度器抢任务的竞争在它上面永远不会真正发生。
+因此**上线前必须在 PostgreSQL 上跑一遍，只跑 SQLite 的测试通过不算通过**：
+
+```bash
+TEST_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/dbname go test -count=1 ./...
+```
+
+CI 目前只做打包构建、不跑测试（见 `.github/workflows/release.yml`），
+这一步因此落在人工上。
 
 ## 关键设计点，改代码前先读
 
