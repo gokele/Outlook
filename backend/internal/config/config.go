@@ -30,6 +30,8 @@ type Config struct {
 	Version string
 	// UpdateRepo 是在线更新的来源仓库，形如 owner/name。留空即关闭在线更新。
 	UpdateRepo string
+	// EnvExplicit 为真表示 APP_ENV 是人显式设的，假表示由监听地址推断得来。
+	EnvExplicit bool
 }
 
 // Load 读取环境变量并校验必填项。
@@ -39,20 +41,24 @@ func Load() (*Config, error) {
 		DatabaseURL: env("DATABASE_URL", "sqlite://./data/app.db"),
 		Proxy:       os.Getenv("OUTBOUND_PROXY"),
 		Tenant:      env("MS_TENANT", "consumers"),
-		Dev:         env("APP_ENV", "dev") == "dev",
 
 		AllowDirectFallback: env("PROXY_ALLOW_DIRECT_FALLBACK", "false") == "true",
 		UpdateRepo:          env("UPDATE_REPO", "gokele/Outlook"),
 	}
+	c.Dev, c.EnvExplicit = inferDev(c.Addr)
 
-	mk := os.Getenv("MASTER_KEY")
+	// 主密钥没有任何回落。
+	//
+	// 这里曾经在开发模式下回落到一把写死在源码里的密钥 —— 它随源码公开，
+	// 用它加密的库一旦泄露等于没有加密，而日志里只有一个不起眼的 env=dev。
+	// 现在没配置时由 EnsureEnvFile 生成一份带随机密钥的 .env，
+	// 走到这里还是空的，说明那一步没能完成，必须明确失败而不是找个值凑合。
+	mk := strings.TrimSpace(os.Getenv("MASTER_KEY"))
 	if mk == "" {
-		if !c.Dev {
-			return nil, fmt.Errorf("MASTER_KEY 未设置。生产环境必须提供 32 字节的十六进制或 base64 主密钥")
-		}
-		// 开发模式下使用固定密钥，方便重启后仍能解开本地数据。
-		mk = "6465765f6f6e6c795f6b65795f6e6f745f666f725f70726f645f757365213131"
+		return nil, fmt.Errorf("MASTER_KEY 未设置。正常情况下首次启动会自动生成 .env，" +
+			"若目录不可写请手动设置该环境变量，值可用 openssl rand -hex 32 生成")
 	}
+
 	key, err := decodeKey(mk)
 	if err != nil {
 		return nil, fmt.Errorf("MASTER_KEY 解析失败: %w", err)

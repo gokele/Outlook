@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -59,9 +60,22 @@ func main() {
 	if v := os.Getenv("ENV_FILE"); v != "" {
 		path = v
 	}
+	// 配置文件不存在时先生成一份，里面带一把随机主密钥。
+	// 没有它程序也能跑（环境变量注入即可），但对"下载就双击"的用法来说，
+	// 自动生成是唯一能保证每台机器钥匙都不一样的做法。
+	created, err := config.EnsureEnvFile(path)
+	if err != nil {
+		log.Warn("无法生成配置文件，将只使用环境变量", "path", path, "err", err)
+	}
 	if err := config.LoadDotEnv(path); err != nil {
 		log.Error("读取配置文件失败", "path", path, "err", err)
 		os.Exit(1)
+	}
+	if created {
+		abs, _ := filepath.Abs(path)
+		log.Warn("已生成配置文件并写入随机主密钥，请立即备份",
+			"path", abs,
+			"说明", "库里的授权码与账号密码都用这把密钥加密。丢了它，已导入的账号全部作废，只能重新导入")
 	}
 
 	if err := run(log, *createUser); err != nil {
@@ -96,6 +110,7 @@ func run(log *slog.Logger, createUser string) error {
 	if err != nil {
 		return err
 	}
+	warnAboutEnv(cfg, log)
 
 	// 命令行建号模式：建完即退出，用于首次部署。
 	if createUser != "" {
@@ -189,6 +204,22 @@ func run(log *slog.Logger, createUser string) error {
 		log.Warn("有取件日志因队列写满被丢弃", "count", n)
 	}
 	return shutErr
+}
+
+// warnAboutEnv 把推断出来的运行环境说明白。
+//
+// 推断的结果必须讲出来，否则人不知道自己正跑在哪一档上 ——
+// 而这一档决定了要不要在对外服务时提醒 HTTPS。
+func warnAboutEnv(cfg *config.Config, log *slog.Logger) {
+	if !cfg.EnvExplicit {
+		log.Info("未设置 APP_ENV，已按监听地址推断",
+			"addr", cfg.Addr, "env", envName(cfg.Dev),
+			"说明", "只监听回环视为本机自用，监听其它地址视为对外提供服务")
+	}
+	if !cfg.Dev {
+		log.Warn("正在对外提供服务，请确认前面有 HTTPS",
+			"说明", "会话 Cookie 的 Secure 位按请求的真实协议自动设置；纯 HTTP 下它无法生效，登录凭据会以明文传输")
+	}
 }
 
 // createAdminUser 按命令行参数创建后台账号。

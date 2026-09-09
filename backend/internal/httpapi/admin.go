@@ -54,11 +54,34 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   !s.cfg.Dev,
+		Secure:   isSecureRequest(r),
 		SameSite: http.SameSiteLaxMode, // 同源部署，无需 None
 		Expires:  exp,
 	})
 	writeJSON(w, r, map[string]any{"user": u})
+}
+
+// isSecureRequest 判断这次请求是不是经由 HTTPS 到达的。
+//
+// 按真实协议决定 Cookie 的 Secure，而不是按一个静态的环境开关。
+//
+// 静态开关有个恶性的失败模式：在纯 HTTP 的内网部署上把 Secure 打开，
+// 浏览器根本不会回传这个 Cookie —— 表现是"登录成功但立刻又回到登录页"，
+// 而这跟安全设置八竿子打不着，排查起来毫无线索。反过来，在 HTTPS 部署上
+// 忘了关 dev，Cookie 又会退化成可在明文里传输。
+//
+// 按请求判断则两边都对：能走 HTTPS 就加固，走不了也不至于登不进去 ——
+// 后者本来就没有 Secure 可保护的东西。
+func isSecureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	// 同源部署时前面常挂一层反代，真实协议只能从这个头看出来。
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if i := strings.IndexByte(proto, ','); i >= 0 {
+		proto = proto[:i]
+	}
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
 // handleLogout 注销当前会话。
