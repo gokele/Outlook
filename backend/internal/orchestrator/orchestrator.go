@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -724,46 +723,6 @@ func intersectFolders(want, can []model.Folder) []model.Folder {
 // containsFold 是大小写不敏感的包含匹配。
 func containsFold(hay, needle string) bool {
 	return strings.Contains(strings.ToLower(hay), strings.ToLower(needle))
-}
-
-// DefaultCodePattern 是预置的验证码正则，匹配 4 到 8 位连续数字。
-const DefaultCodePattern = `\b(\d{4,8})\b`
-
-var codeCache sync.Map
-
-// ExtractCode 从主题与正文中提取验证码。
-// pattern 为 default 时使用预置正则。Go 的 regexp 是 RE2，不会指数回溯，
-// 因此允许调用方传入任意正则而没有灾难性回溯的风险。
-func ExtractCode(m fetcher.Message, pattern string) string {
-	if pattern == "default" || pattern == "" {
-		pattern = DefaultCodePattern
-	}
-	var re *regexp.Regexp
-	if v, ok := codeCache.Load(pattern); ok {
-		re, _ = v.(*regexp.Regexp)
-	} else {
-		var err error
-		re, err = regexp.Compile(pattern)
-		if err != nil {
-			return ""
-		}
-		codeCache.Store(pattern, re)
-	}
-	if re == nil {
-		return ""
-	}
-	for _, s := range []string{m.Subject, m.BodyText, m.Snippet, m.BodyHTML} {
-		if s == "" {
-			continue
-		}
-		if mm := re.FindStringSubmatch(s); mm != nil {
-			if len(mm) > 1 {
-				return mm[1]
-			}
-			return mm[0]
-		}
-	}
-	return ""
 }
 
 // ParseFolders 把逗号分隔的文件夹参数解析为列表。all 展开为收件箱加垃圾邮件。
