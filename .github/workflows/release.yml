@@ -93,33 +93,14 @@ jobs:
           sha256sum api-* > checksums.txt
           cat checksums.txt
 
-      # 发布说明取自仓库里的 CHANGELOG.md，而不是在这里拼文案。
-      # 内容随代码一起提交、一起评审，发布时只是把对应小节抄出来 ——
-      # 构建期临时生成的说明没人看过，很容易与实际改动对不上。
-      - name: 抽取发布说明
-        id: notes
-        run: |
-          tag="${{ steps.ver.outputs.tag }}"
-          # 取 "## <tag>" 到下一个 "## " 之间的内容
-          awk -v tag="$tag" '
-            $0 == "## " tag { found=1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md > notes.md
-          if [ ! -s notes.md ]; then
-            echo "::warning::CHANGELOG.md 里没有 $tag 的小节，将回退到自动生成"
-            echo "fallback=true" >> "$GITHUB_OUTPUT"
-          fi
-          cat notes.md
-
+      # 发布说明先用 GitHub 按提交自动生成，保证发布不会是空白；
+      # 正式的说明在发版时直接写进 Release 页面，不在仓库里另维护一份文档。
       - name: 创建 Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: ${{ steps.ver.outputs.tag }}
-          body_path: notes.md
-          # CHANGELOG 里没写这一版时才退回自动生成，保证发布不会没有说明
-          generate_release_notes: ${{ steps.notes.outputs.fallback == 'true' }}
+          generate_release_notes: true
           files: |
             release/api-*
             release/checksums.txt
