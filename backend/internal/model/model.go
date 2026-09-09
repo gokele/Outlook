@@ -9,7 +9,13 @@ const (
 	StatusUnverified AccountStatus = "UNVERIFIED" // 导入后尚未轮换过
 	StatusActive     AccountStatus = "ACTIVE"     // 距上次轮换不足阈值
 	StatusExpiring   AccountStatus = "EXPIRING"   // 已过轮换点，待轮换
-	StatusInvalid    AccountStatus = "INVALID"    // 微软确认失效，需重新导入
+	StatusInvalid    AccountStatus = "INVALID"    // 授权码失效，重新导入可救
+	// StatusBanned 是账号被微软封禁。
+	//
+	// 与 INVALID 分开，因为处置完全不同：INVALID 重新导入授权码就能救，
+	// BANNED 重新导入多少次都没用。混在一起的后果是运维分不清哪些还值得抢救，
+	// 而调度器会一遍遍去撞一个永远不会成功的账号。
+	StatusBanned AccountStatus = "BANNED"
 )
 
 // Channel 是取件通道。
@@ -122,8 +128,18 @@ type Account struct {
 	RotateFailCount  int           `json:"rotate_fail_count"`
 	LastFetchAt      int64         `json:"last_fetch_at"`
 	LastError        string        `json:"last_error"`
-	Disabled         bool          `json:"disabled"`
-	CreatedAt        int64         `json:"created_at"`
+	// LastErrorCode 是最近一次失败的机器可读标识，形如 AADSTS700082。
+	// 单独存一列而不是从 LastError 里现场解析：解析文本的代价要在每次
+	// 列表请求上乘以行数，而这个值在写入时就已经知道了。
+	LastErrorCode string `json:"last_error_code"`
+	// LastErrorHint 是上面那个码的中文解释，序列化时查表填入，不落库。
+	//
+	// 放在后端算而不是让前端维护一份对照表：判定这些码的逻辑本来就在后端，
+	// 两处各存一份迟早会对不上。零值也必须序列化 —— 字段忽有忽无会让
+	// 前端按可选字段处理，而"没有解释"和"字段缺失"是两回事。
+	LastErrorHint ErrorHint `json:"last_error_hint"`
+	Disabled      bool      `json:"disabled"`
+	CreatedAt     int64     `json:"created_at"`
 
 	// 以下为连表查询时填充的展示字段，不落库。
 	// 不能用 omitempty：空值时字段会整个消失，调用方拿到的对象形状就不稳定，
@@ -297,4 +313,147 @@ type User struct {
 	PasswordHash string `json:"-"`
 	Role         string `json:"role"` // admin / viewer
 	LastLoginAt  int64  `json:"last_login_at"`
+}
+
+// ErrorHint 是错误码的人话解释，随账号一起返回给界面。
+type ErrorHint struct {
+	// Summary 一句话说明这个错误意味着什么，空表示没有收录该码。
+	Summary string `json:"summary"`
+	// Action 是处置建议，没有可操作的建议时为空，不硬凑。
+	Action string `json:"action"`
+	// Fatal 为真表示这个账号已经不可用，重试没有意义。
+	Fatal bool `json:"fatal"`
+}
+
+// ---------- 错误码的人话解释 ----------
+//
+// 微软返回的 error_description 是英文长句，措辞还会变。判定逻辑一律读数字码
+// （见 oauth.classify），但给人看的必须是另一套：运维看到
+// "AADSTS700082: The refresh token has expired due to inactivity..." 只能猜，
+// 看到"授权码已 90 天未使用而过期，需重新导入"才知道下一步做什么。
+//
+// 表放在 model 而不是 oauth：它是"账号怎么呈现"的领域知识，由 store 在扫描时
+// 统一填进 LastErrorHint，每个读取路径都自动带上，不会因为漏改某个处理器而不一致。
+//
+// 刻意不求全：微软文档里几百个码，绝大多数在这条链路上永远不会出现，
+// 全抄进来只会让真正常见的那几个被淹没。没收录的走空值，界面退回展示原文 ——
+// 编一个笼统的解释比没有解释更糟。
+var errorHints = map[string]ErrorHint{
+	"AADSTS700082": {
+		Summary: "授权码已因 90 天未使用而过期",
+		Action:  "需要重新获取授权码后导入。调度器正是为了避免这种情况而存在，出现它通常意味着调度器曾被关闭",
+		Fatal:   true,
+	},
+	"AADSTS700003": {
+		Summary: "授权码已被吊销",
+		Action:  "账号侧主动撤销了授权，或管理员重置了凭据。需重新授权",
+		Fatal:   true,
+	},
+	"AADSTS700084": {
+		Summary: "授权码已超过绝对有效期",
+		Action:  "需要重新获取授权码后导入",
+		Fatal:   true,
+	},
+	"AADSTS70008": {
+		Summary: "授权码已过期或已被使用",
+		Action:  "需要重新获取授权码后导入",
+		Fatal:   true,
+	},
+	"AADSTS50173": {
+		Summary: "账号密码已变更或凭据被吊销，原授权码失效",
+		Action:  "需要用新密码重新授权",
+		Fatal:   true,
+	},
+	"AADSTS9002313": {
+		Summary: "授权码格式不合法",
+		Action:  "多半是导入时复制不全或串行。核对该行的授权码字段是否完整",
+		Fatal:   true,
+	},
+	"AADSTS50076": {
+		Summary: "账号开启了多因素认证，无法用授权码静默取令牌",
+		Action:  "关闭该账号的两步验证，或改用支持 MFA 的授权方式",
+		Fatal:   true,
+	},
+	"AADSTS50079": {
+		Summary: "账号被要求注册多因素认证",
+		Action:  "需要人工登录一次完成注册，或关闭该要求",
+		Fatal:   true,
+	},
+	"AADSTS70000": {
+		Summary: "本次请求的 scope 未被该 client_id 授权",
+		Action:  "不是账号的问题。该 client_id 可能只授权了 IMAP/POP 而没授权 Graph，系统会自动降级到可用通道",
+	},
+	"AADSTS65001": {
+		Summary: "用户尚未同意该应用请求的权限",
+		Action:  "需要走一次授权同意流程",
+		Fatal:   true,
+	},
+	"AADSTS50034": {
+		Summary: "该账号在微软侧不存在",
+		Action:  "核对邮箱是否拼写正确，或账号是否已被删除",
+		Fatal:   true,
+	},
+	"AADSTS50057": {
+		Summary: "账号已被禁用",
+		Action:  "账号被微软或管理员停用，重新导入无效",
+		Fatal:   true,
+	},
+	"AADSTS50053": {
+		Summary: "账号被锁定，或因多次失败触发了智能锁定",
+		Action:  "等待锁定自动解除后再试。短时间内反复重试会延长锁定",
+	},
+	"AADSTS50055": {
+		Summary: "账号密码已过期",
+		Action:  "需要先修改密码再重新授权",
+		Fatal:   true,
+	},
+	"AADSTS53003": {
+		Summary: "被条件访问策略阻止",
+		Action:  "企业租户的策略限制，需要管理员放行",
+		Fatal:   true,
+	},
+	"AADSTS700016": {
+		Summary: "client_id 在目录中不存在",
+		Action:  "这一批账号共用的应用注册可能已被删除。核对 client_id 是否正确",
+		Fatal:   true,
+	},
+	"AADSTS7000215": {
+		Summary: "客户端密钥无效",
+		Action:  "个人账号应使用 Public Client（不带 client_secret）。核对应用注册的类型",
+		Fatal:   true,
+	},
+	"AADSTS90002": {
+		Summary: "租户不存在",
+		Action:  "核对 MS_TENANT 配置。个人账号应为 consumers",
+		Fatal:   true,
+	},
+	"AADSTS900023": {
+		Summary: "租户标识不合法",
+		Action:  "核对 MS_TENANT 配置",
+		Fatal:   true,
+	},
+	"AADSTS500011": {
+		Summary: "请求的资源在该租户中不存在",
+		Action:  "多为租户段配置与账号类型不匹配",
+		Fatal:   true,
+	},
+}
+
+// DiagnoseCode 按错误码查中文解释。未收录时返回零值，
+// 调用方应当退回展示原始错误。
+func DiagnoseCode(code string) ErrorHint {
+	return errorHints[code]
+}
+
+// HintFor 给出某个账号当前该显示的解释。
+// 封禁有专属文案，它没有独立的错误码，只能按状态给。
+func HintFor(status AccountStatus, code string) ErrorHint {
+	if status == StatusBanned {
+		return ErrorHint{
+			Summary: "账号已被微软封禁",
+			Action:  "通常因触发滥用检测。重新导入授权码无效，需要在微软侧申诉解封",
+			Fatal:   true,
+		}
+	}
+	return DiagnoseCode(code)
 }

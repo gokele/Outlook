@@ -18,7 +18,7 @@ var ErrNotFound = errors.New("记录不存在")
 const accountCols = `a.id, a.email, a.password_enc, a.client_id, a.refresh_token_enc, a.tenant,
  a.capabilities, a.channel_policy, a.category_id, a.note, a.status, a.token_refreshed_at,
  a.token_expires_at, a.next_rotate_at, a.rotate_fail_count, a.last_fetch_at, a.last_error,
- a.disabled, a.created_at, a.recovery_email, a.recovery_password_enc`
+ a.disabled, a.created_at, a.recovery_email, a.recovery_password_enc, a.last_error_code`
 
 // scanAccount 从一行结果读出账号。capabilities 以 TEXT 存 JSON，在这里解开。
 func scanAccount(sc interface{ Scan(...any) error }) (*model.Account, error) {
@@ -30,13 +30,16 @@ func scanAccount(sc interface{ Scan(...any) error }) (*model.Account, error) {
 	err := sc.Scan(&a.ID, &a.Email, &pwd, &a.ClientID, &rt, &a.Tenant,
 		&caps, &a.ChannelPolicy, &catID, &a.Note, &a.Status, &a.TokenRefreshedAt,
 		&a.TokenExpiresAt, &a.NextRotateAt, &a.RotateFailCount, &a.LastFetchAt, &a.LastError,
-		&disabled, &a.CreatedAt, &a.RecoveryEmail, &recPwd)
+		&disabled, &a.CreatedAt, &a.RecoveryEmail, &recPwd, &a.LastErrorCode)
 	if err != nil {
 		return nil, err
 	}
 	a.PasswordEnc, a.RefreshTokenEnc, a.RecoveryPasswordEnc = pwd, rt, recPwd
 	a.HasPassword = len(pwd) > 0
 	a.HasRecovery = a.RecoveryEmail != "" || len(recPwd) > 0
+	// 解释在这里统一填，而不是在每个返回账号的处理器里各填一次 ——
+	// 那种写法漏掉任何一处都会让同一个账号在不同接口下显示不一致。
+	a.LastErrorHint = model.HintFor(a.Status, a.LastErrorCode)
 	a.Disabled = disabled != 0
 	if catID.Valid {
 		v := catID.Int64
@@ -165,12 +168,14 @@ func (s *Store) ListAccounts(ctx context.Context, f AccountFilter) ([]*model.Acc
 		if err := rows.Scan(&a.ID, &a.Email, &pwd, &a.ClientID, &rt, &a.Tenant,
 			&caps, &a.ChannelPolicy, &catID, &a.Note, &a.Status, &a.TokenRefreshedAt,
 			&a.TokenExpiresAt, &a.NextRotateAt, &a.RotateFailCount, &a.LastFetchAt, &a.LastError,
-			&disabled, &a.CreatedAt, &a.RecoveryEmail, &recPwd, &catName, &a.LeasedUntil); err != nil {
+			&disabled, &a.CreatedAt, &a.RecoveryEmail, &recPwd, &a.LastErrorCode,
+			&catName, &a.LeasedUntil); err != nil {
 			return nil, 0, err
 		}
 		a.PasswordEnc, a.RefreshTokenEnc, a.RecoveryPasswordEnc = pwd, rt, recPwd
 		a.HasPassword = len(pwd) > 0
 		a.HasRecovery = a.RecoveryEmail != "" || len(recPwd) > 0
+		a.LastErrorHint = model.HintFor(a.Status, a.LastErrorCode)
 		a.Disabled = disabled != 0
 		if catID.Valid {
 			v := catID.Int64

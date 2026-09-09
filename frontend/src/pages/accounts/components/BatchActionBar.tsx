@@ -10,6 +10,8 @@ import { BATCH_VERIFY_MAX } from '@/constants/account';
 
 interface BatchActionBarProps {
   selectedCount: number;
+  /** 选中项里被封禁的个数。它们不参与验证 —— 重试永远不会成功 */
+  bannedCount: number;
   loading: boolean;
   onClear: () => void;
   onMoveCategory: () => void;
@@ -26,6 +28,7 @@ interface BatchActionBarProps {
  */
 export function BatchActionBar({
   selectedCount,
+  bannedCount,
   loading,
   onClear,
   onMoveCategory,
@@ -35,8 +38,11 @@ export function BatchActionBar({
   onDelete,
 }: BatchActionBarProps) {
   const disabled = selectedCount === 0;
+  // 封禁账号不参与验证: 对它重试只是白白多打几次微软的接口,
+  // 还会给这个 client_id 的失败计数添砖加瓦, 最后可能把同批健康账号一起熔断。
+  const verifiable = selectedCount - bannedCount;
   // 批量验证是同步在线验证, 单批有上限; 超限时直接禁用并说明原因
-  const verifyOverLimit = selectedCount > BATCH_VERIFY_MAX;
+  const verifyOverLimit = verifiable > BATCH_VERIFY_MAX;
 
   return (
     <Alert
@@ -66,16 +72,18 @@ export function BatchActionBar({
             title={
               verifyOverLimit
                 ? `单次最多验证 ${BATCH_VERIFY_MAX} 个账号, 更大的量请交给轮换调度器`
-                : `在线逐个验证并续期, 单次上限 ${BATCH_VERIFY_MAX} 个`
+                : bannedCount > 0
+                  ? `已跳过 ${bannedCount} 个封禁账号, 它们重试也不会成功`
+                  : `在线逐个验证并续期, 单次上限 ${BATCH_VERIFY_MAX} 个`
             }
           >
             <Button
               size="small"
               icon={<SafetyCertificateOutlined />}
-              disabled={disabled || loading || verifyOverLimit}
+              disabled={disabled || loading || verifyOverLimit || verifiable === 0}
               onClick={onVerify}
             >
-              批量验证
+              批量验证{bannedCount > 0 ? ` (${verifiable})` : ''}
             </Button>
           </Tooltip>
           <Button size="small" icon={<DownloadOutlined />} onClick={onExport}>

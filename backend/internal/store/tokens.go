@@ -98,11 +98,26 @@ func (t *Tx) setCapability(ctx context.Context, id int64, ch model.Channel, ok b
 
 // MarkInvalid 把账号置为失效并记录原因。只有微软确认的认证失败才会走到这里。
 func (s *Store) MarkInvalid(ctx context.Context, id int64, reason string) error {
+	return s.MarkFailed(ctx, id, model.StatusInvalid, reason, "")
+}
+
+// MarkFailed 把账号置为某个失败态，并记下机器可读的错误标识。
+//
+// status 只接受 INVALID 与 BANNED 两种：前者重新导入授权码能救，
+// 后者不能。分开记是为了让运维一眼看出哪些还值得抢救，
+// 也让调度器不去反复撞一个永远不会成功的账号。
+func (s *Store) MarkFailed(ctx context.Context, id int64,
+	status model.AccountStatus, reason, code string) error {
+
 	if len(reason) > 500 {
 		reason = reason[:500]
 	}
+	if status != model.StatusBanned {
+		status = model.StatusInvalid
+	}
 	_, err := s.exec(ctx,
-		`UPDATE accounts SET status = 'INVALID', last_error = ? WHERE id = ?`, reason, id)
+		`UPDATE accounts SET status = ?, last_error = ?, last_error_code = ? WHERE id = ?`,
+		string(status), reason, code, id)
 	return err
 }
 

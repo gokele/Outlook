@@ -570,9 +570,9 @@ func (s *Server) handleBatchVerify(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sem := make(chan struct{}, verifyConcurrency)
 	var (
-		mu       sync.Mutex
-		ok, fail int
-		wg       sync.WaitGroup
+		mu                sync.Mutex
+		ok, fail, skipped int
+		wg                sync.WaitGroup
 	)
 
 	for _, id := range req.IDs {
@@ -590,6 +590,18 @@ func (s *Server) handleBatchVerify(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				mu.Lock()
 				fail++
+				mu.Unlock()
+				return
+			}
+			// 封禁账号直接跳过，不发请求。
+			//
+			// 对它重试永远不会成功，代价却是实打实的：每一次都算进这个
+			// client_id 的认证失败计数，攒够了会触发熔断，把同批的健康账号
+			// 一起挡在门外。界面上也挡了一道，这里是后端的兜底 ——
+			// 开放 API 的调用方不经过界面。
+			if acc.Status == model.StatusBanned {
+				mu.Lock()
+				skipped++
 				mu.Unlock()
 				return
 			}
@@ -617,10 +629,10 @@ func (s *Server) handleBatchVerify(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	if ctx.Err() != nil {
-		writeJSON(w, r, map[string]any{"ok": ok, "fail": fail, "interrupted": true})
+		writeJSON(w, r, map[string]any{"ok": ok, "fail": fail, "skipped": skipped, "interrupted": true})
 		return
 	}
-	writeJSON(w, r, map[string]any{"ok": ok, "fail": fail})
+	writeJSON(w, r, map[string]any{"ok": ok, "fail": fail, "skipped": skipped})
 }
 
 type batchUpdateReq struct {

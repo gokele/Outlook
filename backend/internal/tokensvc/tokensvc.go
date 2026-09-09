@@ -123,7 +123,10 @@ func (s *Service) GetVia(ctx context.Context, acc *model.Account, ch model.Chann
 		}
 	}
 
-	if acc.Status == model.StatusInvalid {
+	// 失效与封禁都不再取令牌。封禁尤其要挡在这里：它永远不会成功，
+	// 每一次尝试都只是在给这个 client_id 的失败计数添砖加瓦，
+	// 最后可能把同批其他健康账号一起熔断掉。
+	if acc.Status == model.StatusInvalid || acc.Status == model.StatusBanned {
 		return "", "", ErrTokenInvalid
 	}
 	if ok, probed := acc.Capabilities.Get(ch); probed && !ok {
@@ -295,12 +298,18 @@ func (s *Service) applyError(ctx context.Context, a *model.Account, ch model.Cha
 		_ = s.st.SetCapability(ctx, a.ID, ch, false)
 		return fmt.Errorf("%w: %v", ErrChannelUnavailable, oe)
 
+	case oauth.KindBanned:
+		// 封禁不走 client_id 熔断的判定：它是账号自己的问题，
+		// 与这个应用注册的健康状况无关，混进去会把熔断的判据搅浑。
+		_ = s.st.MarkFailed(ctx, a.ID, model.StatusBanned, oe.Error(), errCode(oe))
+		return fmt.Errorf("%w: %v", ErrTokenInvalid, oe)
+
 	case oauth.KindInvalidGrant, oauth.KindNeedInteraction:
 		// 先检查 client_id 维度：应用被封时不应逐个把账号标记为失效。
 		if suspended, _ := s.checkAndSuspend(ctx, a.ClientID); suspended {
 			return ErrClientSuspended
 		}
-		_ = s.st.MarkInvalid(ctx, a.ID, oe.Error())
+		_ = s.st.MarkFailed(ctx, a.ID, model.StatusInvalid, oe.Error(), errCode(oe))
 		return fmt.Errorf("%w: %v", ErrTokenInvalid, oe)
 
 	case oauth.KindClientProblem:
@@ -376,4 +385,18 @@ func (s *Service) VerifyVia(ctx context.Context, acc *model.Account, order []mod
 		lastErr = errors.New("没有可用通道")
 	}
 	return "", lastErr
+}
+
+// errCode 取错误的机器可读标识，优先用 AADSTS 数字码。
+//
+// 存这个而不是只存原文，是为了让界面能按码查中文解释 ——
+// 从 500 字的英文原文里现场解析出码，代价要乘以列表的行数。
+func errCode(e *oauth.Error) string {
+	if e == nil {
+		return ""
+	}
+	if e.AADSTS != 0 {
+		return fmt.Sprintf("AADSTS%d", e.AADSTS)
+	}
+	return e.Code
 }

@@ -45,6 +45,11 @@ const (
 	KindRateLimited
 	// KindTransient 表示网络或服务端临时故障，退避重试，不改账号状态。
 	KindTransient
+	// KindBanned 表示账号被微软封禁。
+	//
+	// 与 KindInvalidGrant 分开是因为处置完全不同：授权码失效重新导入就能救，
+	// 封禁重新导入多少次都没用，只会白白多打几次微软的接口。
+	KindBanned
 	// KindNeedInteraction 表示需要用户重新交互授权，服务端无法自动完成。
 	KindNeedInteraction
 )
@@ -72,12 +77,13 @@ func (e *Error) Error() string {
 // 只有微软确认的认证失败才算，网络类与限流类绝不改状态，
 // 否则微软侧一次抖动就会批量误杀账号。
 func (e *Error) IsFatal() bool {
-	return e.Kind == KindInvalidGrant || e.Kind == KindNeedInteraction
+	return e.Kind == KindInvalidGrant || e.Kind == KindNeedInteraction || e.Kind == KindBanned
 }
 
 // IsAuthFailure 判断该错误是否计入 client_id 的认证失败统计。
 func (e *Error) IsAuthFailure() bool {
-	return e.Kind == KindInvalidGrant || e.Kind == KindClientProblem || e.Kind == KindNeedInteraction
+	return e.Kind == KindInvalidGrant || e.Kind == KindClientProblem ||
+		e.Kind == KindNeedInteraction || e.Kind == KindBanned
 }
 
 // Client 是令牌端点客户端。
@@ -244,6 +250,13 @@ func classify(resp *http.Response, body []byte) *Error {
 	}
 	if resp.StatusCode >= 500 {
 		e.Kind = KindTransient
+		return e
+	}
+
+	// 封禁的判定要早于按码分类：微软没有为它分配独立的 AADSTS 码，
+	// 只在描述里写明，走到下面的 switch 就会被归成普通的 invalid_grant。
+	if looksBanned(eb.ErrorDescription) {
+		e.Kind = KindBanned
 		return e
 	}
 

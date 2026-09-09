@@ -33,13 +33,30 @@ export const ACCOUNT_STATUS_META: Record<AccountStatus, StatusMeta> = {
     label: '失效',
     color: 'error',
     hex: '#ff4d4f',
-    description: '令牌已失效或连续轮换失败, 需要重新导入授权',
+    description: '授权码已失效或连续轮换失败, 重新导入授权码可以救回',
+  },
+  BANNED: {
+    label: '已封禁',
+    color: 'magenta',
+    hex: '#c41d7f',
+    description: '账号被微软封禁, 重新导入授权码无效, 需在微软侧申诉解封',
   },
 };
 
+/**
+ * 判断该状态下账号是否还值得重试。
+ *
+ * 封禁与失效的区别就在这里: 失效重新导入授权码能救, 封禁不能。
+ * 批量操作据此跳过封禁账号 —— 对它重试只是白白多打几次微软的接口,
+ * 还会给这个 client_id 的失败计数添砖加瓦, 最后可能把同批健康账号一起熔断。
+ */
+export function isRecoverable(status: AccountStatus): boolean {
+  return status !== 'BANNED';
+}
+
 /** 状态下拉选项, 顺序与总览卡片保持一致 */
 export const ACCOUNT_STATUS_OPTIONS: Array<{ label: string; value: AccountStatus }> = (
-  ['UNVERIFIED', 'ACTIVE', 'EXPIRING', 'INVALID'] as AccountStatus[]
+  ['UNVERIFIED', 'ACTIVE', 'EXPIRING', 'INVALID', 'BANNED'] as AccountStatus[]
 ).map((value) => ({ label: ACCOUNT_STATUS_META[value].label, value }));
 
 /** 通道展示名 */

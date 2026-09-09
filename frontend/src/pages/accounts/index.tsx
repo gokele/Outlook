@@ -190,6 +190,13 @@ export default function AccountsPage() {
     await mutations.exportFile.mutateAsync({ ...exportParams, confirm_password: password });
   };
 
+  // 选中项里有多少个是封禁账号。只在当前页的数据里数 ——
+  // 跨页选中的行不在手边, 为了这个数字再去请求一次不值得,
+  // 少算的部分后端也会跳过, 界面上的提示只是提前告知。
+  const bannedSelected = items.filter(
+    (a) => a.status === 'BANNED' && selectedKeys.includes(a.id as never),
+  ).length;
+
   const batchLoading =
     mutations.batchUpdate.isPending ||
     mutations.batchRemove.isPending ||
@@ -217,6 +224,7 @@ export default function AccountsPage() {
 
       <BatchActionBar
         selectedCount={selectedKeys.length}
+        bannedCount={bannedSelected}
         loading={batchLoading}
         onClear={() => setSelectedKeys([])}
         onMoveCategory={() => void handleBatchUpdate('category')}

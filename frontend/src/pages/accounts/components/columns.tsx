@@ -17,6 +17,7 @@ import { formatUnixShort, daysFromNow, formatCountdown } from '@/utils/time';
 import { truncate } from '@/utils/text';
 import { EllipsisText } from '@/components/common/EllipsisText';
 import { CredentialsCell } from './CredentialsCell';
+import { ErrorHintPopover } from '@/components/common/ErrorHintPopover';
 
 /**
  * 行操作回调集合。
@@ -242,11 +243,18 @@ export function buildAccountColumns(
         dataIndex: 'last_fetch_at',
         key: 'last_fetch_at',
         width: 104,
+        // 解释随列表一起下发, 悬浮即看, 不会为了显示它再发一次请求。
         render: (value: number, record) =>
           record.last_error ? (
-            <Tooltip title={`最近错误: ${record.last_error}`}>
-              <Typography.Text type="danger">{formatUnixShort(value)}</Typography.Text>
-            </Tooltip>
+            <ErrorHintPopover
+              hint={record.last_error_hint}
+              code={record.last_error_code}
+              raw={record.last_error}
+            >
+              <Typography.Text type="danger" style={{ cursor: 'help' }}>
+                {formatUnixShort(value)}
+              </Typography.Text>
+            </ErrorHintPopover>
           ) : (
             <Typography.Text>{formatUnixShort(value)}</Typography.Text>
           ),

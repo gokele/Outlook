@@ -79,9 +79,38 @@ export function AccountCard({
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Alert
-          type={account.status === 'INVALID' ? 'error' : 'info'}
+          type={
+            account.status === 'BANNED' || account.status === 'INVALID' ? 'error' : 'info'
+          }
           showIcon
           message={ACCOUNT_STATUS_META[account.status]?.description ?? '状态未知'}
+          // 有具体错误时把解释摊开在这里, 而不是让人去悬浮某个角落 ——
+          // 详情页的人正是来查"它到底怎么了"的。
+          description={
+            account.last_error_hint.summary || account.last_error ? (
+              <Space direction="vertical" size={4} style={{ marginTop: 4 }}>
+                {account.last_error_hint.summary ? (
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    {account.last_error_code ? `${account.last_error_code}：` : ''}
+                    {account.last_error_hint.summary}
+                  </Typography.Text>
+                ) : null}
+                {account.last_error_hint.action ? (
+                  <Typography.Text style={{ fontSize: 13 }}>
+                    {account.last_error_hint.action}
+                  </Typography.Text>
+                ) : null}
+                {account.last_error ? (
+                  <Typography.Text
+                    type="secondary"
+                    style={{ fontSize: 12, fontFamily: 'var(--app-font-mono)' }}
+                  >
+                    {account.last_error}
+                  </Typography.Text>
+                ) : null}
+              </Space>
+            ) : null
+          }
         />
 
         <div>

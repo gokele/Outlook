@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS proxies (
 	{"025_sessions_secrets_until", `ALTER TABLE sessions ADD COLUMN secrets_until BIGINT NOT NULL DEFAULT 0`},
 	{"026_accounts_recovery_email", `ALTER TABLE accounts ADD COLUMN recovery_email TEXT NOT NULL DEFAULT ''`},
 	{"027_accounts_recovery_password", `ALTER TABLE accounts ADD COLUMN recovery_password_enc BYTEA`},
+	{"028_accounts_last_error_code", `ALTER TABLE accounts ADD COLUMN last_error_code TEXT NOT NULL DEFAULT ''`},
 }
 
 // Migrate 建表并记录已执行的脚本。脚本以 PostgreSQL 语法书写，

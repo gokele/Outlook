@@ -24,12 +24,16 @@
   "channel_policy": "auto",              // auto | graph | imap | pop3
   "category_id": 3, "category_name": "注册用",
   "note": "", "tags": ["批次A"],
-  "status": "ACTIVE",                    // UNVERIFIED | ACTIVE | EXPIRING | INVALID
+  "status": "ACTIVE",                    // UNVERIFIED | ACTIVE | EXPIRING | INVALID | BANNED
   "token_refreshed_at": 1757300000,      // 0 表示从未轮换，此时到期时间显示为未知
   "token_expires_at": 1765076000,        // refresh_token 的 90 天硬过期
   "next_rotate_at": 1762484000,          // 下次轮换，默认 60 天一次
   "rotate_fail_count": 0,                // 连续失败 5 次以上需人工介入
   "last_fetch_at": 0, "last_error": "",
+  "last_error_code": "",                 // 形如 AADSTS700082，机器可读
+  "last_error_hint": {                   // 上面那个码的中文解释，零值也必定存在
+    "summary": "", "action": "", "fatal": false
+  },
   "disabled": false, "created_at": 1757200000,
   "leased_until": 0,                     // 非 0 表示被租约占用
   "has_password": false,                 // 导入时是否带了密码，只是标记
@@ -153,7 +157,7 @@ curl -H "Authorization: Bearer okc_xxx" \
 | `POST /api/admin/accounts/{id}/verify` | 手动轮换，返回 `{account, ok, error?}` |
 | `POST /api/admin/accounts/unlock-secrets` | `{password}` 为当前登录密码。通过后本会话 15 分钟内可查看明文密码，返回 `{unlocked_until}`。密码错误返回 403 `CONFIRM_REQUIRED` |
 | `GET /api/admin/accounts/{id}/password` | 返回 `{password, recovery_email, recovery_password}` 三样明文，缺的那项为空串、字段本身始终存在。未解锁返回 403 `CONFIRM_REQUIRED`，三样都没有返回 404 `NO_SECRET`。**每次调用只写一条 `trigger=reveal` 的审计日志**——界面上它们是同一个弹窗的内容，拆开取会把「看了一次」记成三次 |
-| `POST /api/admin/accounts/batch/verify` | **同步接口**，返回 `{ok, fail}`。单批上限 20，超过返回 `BATCH_TOO_LARGE`。更大的量交给调度器 |
+| `POST /api/admin/accounts/batch/verify` | **同步接口**，返回 `{ok, fail, skipped}`。单批上限 20，超过返回 `BATCH_TOO_LARGE`。`BANNED` 的账号会被跳过并计入 `skipped`——对它重试永远不会成功，只会给该 `client_id` 的失败计数添砖加瓦。更大的量交给调度器 |
 | `POST /api/admin/accounts/batch/update` / `batch/delete` | 批量改与删 |
 | `POST /api/admin/import` | 见下。JSON 请求体，适合粘贴的小批量 |
 | `POST /api/admin/import/file` | `multipart/form-data`，字段 `file` 加 `separator`/`category_id`/`tags`/`on_duplicate`/`dry_run`。**文件大小不设上限**，后端逐行流式处理，内存占用与文件多大无关。自动识别 UTF-8 与 GBK |

@@ -12,7 +12,22 @@ export interface ApiEnvelope<T> {
 }
 
 /** 账号状态: 未验证 / 正常 / 即将过期 / 失效 */
-export type AccountStatus = 'UNVERIFIED' | 'ACTIVE' | 'EXPIRING' | 'INVALID';
+export type AccountStatus = 'UNVERIFIED' | 'ACTIVE' | 'EXPIRING' | 'INVALID' | 'BANNED';
+
+/**
+ * 错误码的人话解释, 由后端按已存的错误码查表填入。
+ *
+ * 解释在后端算而不是前端维护一份对照表: 判定这些码的逻辑本来就在后端,
+ * 两处各存一份迟早会对不上。零值也必定存在, 不会因为没有解释而字段消失。
+ */
+export interface ErrorHint {
+  /** 一句话说明这个错误意味着什么, 空表示未收录该码 */
+  summary: string;
+  /** 处置建议, 没有可操作建议时为空 */
+  action: string;
+  /** 为真表示账号已不可用, 重试没有意义 */
+  fatal: boolean;
+}
 
 /** 取件通道策略, auto 表示由后端按能力自动选择 */
 export type ChannelPolicy = 'auto' | 'graph' | 'imap' | 'pop3';
@@ -46,6 +61,10 @@ export interface Account {
   rotate_fail_count: number;
   last_fetch_at: number;
   last_error: string;
+  /** 最近一次失败的机器可读标识, 形如 AADSTS700082 */
+  last_error_code: string;
+  /** 上面那个码的中文解释, 随列表一起返回, 展示时无需再发请求 */
+  last_error_hint: ErrorHint;
   disabled: boolean;
   created_at: number;
   leased_until: number;
@@ -245,6 +264,8 @@ export type SettingsMap = Record<string, unknown>;
 export interface BatchVerifyResult {
   ok: number;
   fail: number;
+  /** 被跳过的账号数。目前只有封禁账号会被跳过, 它们重试也不会成功 */
+  skipped: number;
   interrupted?: boolean;
 }
 

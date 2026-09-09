@@ -92,7 +92,11 @@ export function useAccountMutations() {
     mutationFn: (payload: BatchVerifyPayload) => batchVerifyAccounts(payload),
     onSuccess: async (data) => {
       // 该接口同步执行, 直接汇报结果; 被中断时提示实际完成的部分
-      const summary = `批量验证完成: 成功 ${data?.ok ?? 0} 个, 失败 ${data?.fail ?? 0} 个`;
+      const skipped = data?.skipped ?? 0;
+      // 跳过的数量要报出来, 否则"选了 10 个只验了 7 个"看起来像是漏掉了。
+      const summary =
+        `批量验证完成: 成功 ${data?.ok ?? 0} 个, 失败 ${data?.fail ?? 0} 个` +
+        (skipped > 0 ? `, 跳过 ${skipped} 个封禁账号` : '');
       if (data?.interrupted) {
         toast.warning(`${summary} (请求被中断, 剩余账号未处理)`);
       } else if ((data?.fail ?? 0) > 0) {
