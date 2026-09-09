@@ -33,21 +33,28 @@ export default function OverviewPage() {
       <QueryStateView isPending={isPending} error={error} onRetry={() => void refetch()} skeletonRows={8}>
         {data ? (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            <StatusSummary data={data} />
+            {/*
+              看板逐块浮现, 每块错开 60ms。
+              延迟只排到第 5 块为止: 再往后人眼已经跟不上先后, 而继续累加
+              会让最后一块迟迟不出现, 看起来像没加载出来。
+            */}
+            <div className="okc-rise">
+              <StatusSummary data={data} />
+            </div>
             <Row gutter={[16, 16]} align="stretch">
-              <Col xs={24} xl={16}>
+              <Col xs={24} xl={16} className="okc-rise" style={{ animationDelay: '60ms' }}>
                 <SchedulerHealthCard data={data} />
               </Col>
-              <Col xs={24} md={12} xl={8}>
+              <Col xs={24} md={12} xl={8} className="okc-rise" style={{ animationDelay: '120ms' }}>
                 <FetchStats data={data} />
               </Col>
-              <Col xs={24} md={12} xl={8}>
+              <Col xs={24} md={12} xl={8} className="okc-rise" style={{ animationDelay: '180ms' }}>
                 <TokenTiers data={data} />
               </Col>
-              <Col xs={24} md={12} xl={8}>
+              <Col xs={24} md={12} xl={8} className="okc-rise" style={{ animationDelay: '240ms' }}>
                 <CategoryDistribution data={data} />
               </Col>
-              <Col xs={24} xl={8}>
+              <Col xs={24} xl={8} className="okc-rise" style={{ animationDelay: '300ms' }}>
                 <SuspendedClients data={data} />
               </Col>
             </Row>

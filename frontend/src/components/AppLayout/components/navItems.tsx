@@ -3,6 +3,7 @@ import {
   DashboardOutlined,
   FileTextOutlined,
   GlobalOutlined,
+  CloudDownloadOutlined,
   KeyOutlined,
   MailOutlined,
   SettingOutlined,
@@ -26,6 +27,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: '/proxies', label: '出口代理', icon: <GlobalOutlined /> },
   { key: '/apikeys', label: 'API 密钥', icon: <KeyOutlined /> },
   { key: '/logs', label: '日志', icon: <FileTextOutlined /> },
+  { key: '/update', label: '在线更新', icon: <CloudDownloadOutlined /> },
   { key: '/settings', label: '设置', icon: <SettingOutlined /> },
 ];
 

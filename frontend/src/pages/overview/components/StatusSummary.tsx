@@ -22,8 +22,10 @@ export function StatusSummary({ data }: StatusSummaryProps) {
   return (
     <Row gutter={[16, 16]} align="stretch">
       <Col xs={24} sm={12} lg={4} xl={4}>
+        {/* okc-lift 只加过渡, 悬浮抬起 2px; hoverable 负责 antd 自带的阴影变化 */}
         <Card
           hoverable
+          className="okc-pop okc-lift"
           onClick={() => goToAccounts(undefined)}
           style={{ height: '100%' }}
           styles={{ body: { padding: 16 } }}
@@ -31,7 +33,7 @@ export function StatusSummary({ data }: StatusSummaryProps) {
           <Statistic title="账号总数" value={total} />
         </Card>
       </Col>
-      {ORDER.map((status) => {
+      {ORDER.map((status, index) => {
         const meta = ACCOUNT_STATUS_META[status];
         const count = data.by_status?.[status] ?? 0;
         const percent = total > 0 ? Math.round((count / total) * 1000) / 10 : 0;
@@ -39,8 +41,10 @@ export function StatusSummary({ data }: StatusSummaryProps) {
           <Col key={status} xs={12} sm={12} lg={5} xl={5}>
             <Card
               hoverable
+              className="okc-pop okc-lift"
               onClick={() => goToAccounts(status)}
-              style={{ height: '100%' }}
+              // 四张状态卡依次弹出, 与左边的总数卡拉开先后
+              style={{ height: '100%', animationDelay: `${(index + 1) * 55}ms` }}
               styles={{ body: { padding: 16 } }}
             >
               <Statistic

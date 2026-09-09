@@ -226,7 +226,7 @@ export default function AccountsPage() {
         onDelete={() => void handleBatchDelete()}
       />
 
-      <Card size="small" styles={{ body: { padding: 0 } }}>
+      <Card size="small" className="okc-stagger" styles={{ body: { padding: 0 } }}>
         <QueryStateView
           isPending={isPending}
           error={error}

@@ -119,6 +119,12 @@ const profileRoute = createRoute({
   component: lazyRouteComponent(() => import('@/pages/profile')),
 });
 
+const updateRoute = createRoute({
+  getParentRoute: () => authRoute,
+  path: '/update',
+  component: lazyRouteComponent(() => import('@/pages/update')),
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => authRoute,
   path: '/settings',
@@ -138,6 +144,7 @@ export const routeTree = rootRoute.addChildren([
     logsRoute,
     proxiesRoute,
     profileRoute,
+    updateRoute,
     settingsRoute,
   ]),
 ]);

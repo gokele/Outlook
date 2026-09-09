@@ -106,6 +106,135 @@ body {
   transition: background-color 0.18s ease;
 }
 
+/*
+ * 通用入场动效。
+ *
+ * 只动 transform 与 opacity —— 这两个属性走合成层, 不触发重排与重绘,
+ * 因此几十个元素同时入场也不会掉帧。改 height 或 margin 做同样的效果
+ * 会让浏览器逐帧重算布局, 在账号列表那种长表格上立刻能看出卡顿。
+ *
+ * both 填充模式不可省: 没有它, 带 animation-delay 的元素在延迟期间会以
+ * 最终状态显示, 先闪一下再跳回起点。
+ */
+@keyframes okc-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.okc-rise {
+  animation: okc-rise 0.34s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+/* 卡片悬浮时轻微抬起, 暗示"这块是可交互的整体" */
+.okc-lift {
+  transition:
+    transform 0.2s cubic-bezier(0.2, 0.7, 0.3, 1),
+    box-shadow 0.2s ease;
+}
+
+.okc-lift:hover {
+  transform: translateY(-2px);
+}
+
+/*
+ * 不定进度条: 用于"正在做但不知道还要多久"的场景。
+ *
+ * 比一个编出来的百分比诚实 —— 下载进度在服务端, 浏览器这边根本看不到,
+ * 假进度条只会让人误判还要等多久。
+ */
+@keyframes okc-indeterminate {
+  0% {
+    transform: translateX(-100%) scaleX(0.35);
+  }
+  50% {
+    transform: translateX(20%) scaleX(0.6);
+  }
+  100% {
+    transform: translateX(220%) scaleX(0.35);
+  }
+}
+
+.okc-indeterminate {
+  position: relative;
+  height: 3px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--okc-track, rgba(0, 0, 0, 0.06));
+}
+
+.okc-indeterminate::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  animation: okc-indeterminate 1.25s ease-in-out infinite;
+}
+
+/* 更新弹窗里的步骤逐条入场, 让两步的先后关系看得出来 */
+.okc-update-step {
+  animation: okc-rise 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+/*
+ * 表格行依次淡入。
+ *
+ * 只给前 12 行排延迟: 再往后人眼已经跟不上, 而延迟继续累加会让最后几行
+ * 迟迟不出现, 看起来像是加载卡住了。第 13 行起一律零延迟, 直接跟上。
+ */
+@keyframes okc-row-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.okc-stagger .ant-table-tbody > tr.ant-table-row {
+  animation: okc-row-in 0.26s ease-out both;
+}
+
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(1) { animation-delay: 0ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(2) { animation-delay: 20ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(3) { animation-delay: 40ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(4) { animation-delay: 60ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(5) { animation-delay: 80ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(6) { animation-delay: 100ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(7) { animation-delay: 120ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(8) { animation-delay: 140ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(9) { animation-delay: 160ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(10) { animation-delay: 180ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(11) { animation-delay: 200ms; }
+.okc-stagger .ant-table-tbody > tr.ant-table-row:nth-child(12) { animation-delay: 220ms; }
+
+/* 统计数字入场时轻微放大, 强调"这是个值" */
+@keyframes okc-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.okc-pop {
+  animation: okc-pop 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
 /* 用户偏好减少动效时, 关闭弹窗、遮罩与页面切换的全部动画 */
 @media (prefers-reduced-motion: reduce) {
   .ant-modal,
@@ -118,9 +247,28 @@ body {
   .ant-fade-appear,
   .ant-fade-leave,
   .okc-route-enter,
-  .okc-nav-progress {
+  .okc-nav-progress,
+  .okc-rise,
+  .okc-pop,
+  .okc-update-step,
+  .okc-stagger .ant-table-tbody > tr.ant-table-row {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* 悬浮抬起也一并去掉 */
+  .okc-lift:hover {
+    transform: none;
+  }
+
+  /*
+   * 不定进度条例外: 它是"正在进行"的唯一提示, 停掉动画等于让人以为卡死了。
+   * 改成不动的整条, 保留信息但不做位移。
+   */
+  .okc-indeterminate::after {
+    animation: none !important;
+    transform: none;
   }
 
   /*

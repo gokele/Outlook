@@ -93,32 +93,23 @@ jobs:
           sha256sum api-* > checksums.txt
           cat checksums.txt
 
-      - name: 整理变更说明
+      # 发布说明取自仓库里的 CHANGELOG.md，而不是在这里拼文案。
+      # 内容随代码一起提交、一起评审，发布时只是把对应小节抄出来 ——
+      # 构建期临时生成的说明没人看过，很容易与实际改动对不上。
+      - name: 抽取发布说明
         id: notes
         run: |
-          prev=$(git describe --tags --abbrev=0 "${{ steps.ver.outputs.tag }}^" 2>/dev/null || true)
-          {
-            if [ -n "$prev" ]; then
-              echo "### 自 $prev 以来的变更"
-              echo
-              git log --no-merges --pretty='- %s' "$prev..${{ steps.ver.outputs.tag }}"
-            else
-              echo "### 首个发布"
-            fi
-            echo
-            echo "### 下载"
-            echo
-            echo "单文件，前端已嵌在里面，不需要另配静态资源服务。"
-            echo
-            echo '| 平台 | 文件 |'
-            echo '|---|---|'
-            echo '| Linux x86_64 | `api-linux-amd64` |'
-            echo '| Linux ARM64 | `api-linux-arm64` |'
-            echo '| Windows x86_64 | `api-windows-amd64.exe` |'
-            echo '| Windows ARM64 | `api-windows-arm64.exe` |'
-            echo
-            echo "已在运行旧版本的，直接在设置页的「在线更新」里一键升级即可，无需手动下载。"
-          } > notes.md
+          tag="${{ steps.ver.outputs.tag }}"
+          # 取 "## <tag>" 到下一个 "## " 之间的内容
+          awk -v tag="$tag" '
+            $0 == "## " tag { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::warning::CHANGELOG.md 里没有 $tag 的小节，将回退到自动生成"
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
+          fi
           cat notes.md
 
       - name: 创建 Release
@@ -127,6 +118,8 @@ jobs:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: ${{ steps.ver.outputs.tag }}
           body_path: notes.md
+          # CHANGELOG 里没写这一版时才退回自动生成，保证发布不会没有说明
+          generate_release_notes: ${{ steps.notes.outputs.fallback == 'true' }}
           files: |
             release/api-*
             release/checksums.txt

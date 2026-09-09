@@ -150,7 +150,7 @@ export default function LogsPage() {
           }
         />
 
-        <div style={{ marginTop: 12 }}>
+        <div className="okc-stagger" style={{ marginTop: 12 }}>
           <QueryStateView
             isPending={isPending}
             error={error}

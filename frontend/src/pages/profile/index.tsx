@@ -20,13 +20,16 @@ export default function ProfilePage() {
   return (
     <PageContainer title="个人中心" description="查看当前登录账号，修改登录名与密码。">
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
-        <IdentityCard user={user} lastLoginAt={user?.last_login_at} />
+        <div className="okc-rise">
+          <IdentityCard user={user} lastLoginAt={user?.last_login_at} />
+        </div>
 
         <Row gutter={[16, 16]} align="stretch">
           <Col xs={24} lg={12}>
             <Card
+              className="okc-rise"
               // height 100% 配合 align="stretch": 两张卡等高, 窄的那张不会短一截。
-              style={{ height: '100%' }}
+              style={{ height: '100%', animationDelay: '80ms' }}
               title={
                 <Space size={8}>
                   <IdcardOutlined />
@@ -40,7 +43,8 @@ export default function ProfilePage() {
 
           <Col xs={24} lg={12}>
             <Card
-              style={{ height: '100%' }}
+              className="okc-rise"
+              style={{ height: '100%', animationDelay: '160ms' }}
               title={
                 <Space size={8}>
                   <KeyOutlined />
