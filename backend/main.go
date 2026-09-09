@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,6 +28,7 @@ import (
 	"github.com/kele/outlook-console/internal/scheduler"
 	"github.com/kele/outlook-console/internal/store"
 	"github.com/kele/outlook-console/internal/tokensvc"
+	"github.com/kele/outlook-console/internal/updater"
 	"github.com/kele/outlook-console/web"
 )
 
@@ -91,6 +93,22 @@ func run(log *slog.Logger, createUser string) error {
 		return err
 	}
 	cfg.Version = version
+
+	// 回滚检查要放在最前面：上一次更新装上去的版本若根本起不来，
+	// 现在跑的就是那个起不来的版本，越早换回去越好。
+	// 这里换完立即用旧版本重启，本次进程不再继续。
+	if exe, perr := updater.SelfPath(); perr == nil {
+		if rolledBack, note := updater.RollbackIfStale(exe); note != "" {
+			if rolledBack {
+				log.Error("更新回滚", "说明", note)
+				if rerr := updater.Relaunch(exe); rerr != nil {
+					log.Error("回滚后重启失败，请手动重启服务", "err", rerr)
+				}
+				return nil
+			}
+			log.Info("更新回滚保护", "说明", note)
+		}
+	}
 
 	st, err := store.Open(cfg.DatabaseURL)
 	if err != nil {
@@ -179,11 +197,28 @@ func run(log *slog.Logger, createUser string) error {
 		IdleTimeout:       120 * time.Second,
 	}
 
+	// 显式建监听器，而不是让 ListenAndServe 内部去建。
+	//
+	// 为的是拿到一个明确的"已经能对外服务"的时刻：绑端口是启动阶段最常见的
+	// 失败点（端口被占、权限不足、地址写错），绑上了才有资格宣告这一版是好的。
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("监听 %s 失败: %w", cfg.Addr, err)
+	}
+
+	// 走到这里说明数据库迁移跑完了、端口也绑上了 —— 这一版确实活了下来。
+	// 此时才解除回滚保护并删掉备份。一进 main 就调等于没有验证。
+	if exe, perr := updater.SelfPath(); perr == nil {
+		if updater.MarkHealthy(exe) {
+			log.Info("新版本启动正常，已清理上一版备份", "version", version)
+		}
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("HTTP 服务已启动", "addr", cfg.Addr, "env", envName(cfg.Dev),
 			"version", version, "web", web.Available())
-		if err := h.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := h.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()

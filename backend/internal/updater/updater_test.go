@@ -133,9 +133,21 @@ func TestApplyRejectsBadChecksum(t *testing.T) {
 	}
 }
 
+// fakeBinary 是一个能执行的"新版本"。
+//
+// 必须真的能跑：applyTo 会在替换之前用 -version 试运行一次，
+// 拿纯文本冒充会被拦下 —— 而那正是这道检查该做的事。
+func fakeBinary(version string) []byte {
+	return []byte("#!/bin/sh\necho 'outlook-console api " + version + "'\n")
+}
+
 // TestApplyReplacesAndBacksUp 校验成功路径: 换上新内容, 旧的留一份。
 func TestApplyReplacesAndBacksUp(t *testing.T) {
-	srv, _ := newFakeGitHub(t, []byte("新版二进制"), "")
+	if runtime.GOOS == "windows" {
+		t.Skip("用 shell 脚本冒充二进制，Windows 上跑不了")
+	}
+	payload := fakeBinary("v9.9.9")
+	srv, _ := newFakeGitHub(t, payload, "")
 	u := newUpdater(t, srv, "v1.0.0")
 	rel, err := u.Latest(context.Background())
 	if err != nil {
@@ -152,7 +164,7 @@ func TestApplyReplacesAndBacksUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(self); string(got) != "新版二进制" {
+	if got, _ := os.ReadFile(self); string(got) != string(payload) {
 		t.Fatalf("未替换成新版本: %q", got)
 	}
 	if got, _ := os.ReadFile(backup); string(got) != "旧版二进制" {
@@ -185,7 +197,11 @@ func TestLookupChecksum(t *testing.T) {
 // execve 于是把旧版本重新拉起来 —— 进程号没变、服务也在，唯独版本没动。
 // 因此重启目标一定要在替换之前捕获。
 func TestApplyKeepsOriginalPath(t *testing.T) {
-	srv, _ := newFakeGitHub(t, []byte("新版二进制"), "")
+	if runtime.GOOS == "windows" {
+		t.Skip("用 shell 脚本冒充二进制，Windows 上跑不了")
+	}
+	payload := fakeBinary("v9.9.9")
+	srv, _ := newFakeGitHub(t, payload, "")
 	u := newUpdater(t, srv, "v1.0.0")
 	rel, err := u.Latest(context.Background())
 	if err != nil {
@@ -204,7 +220,7 @@ func TestApplyKeepsOriginalPath(t *testing.T) {
 	}
 
 	// 原路径拿到新版本 —— 重启就该 exec 这个路径。
-	if got, _ := os.ReadFile(self); string(got) != "新版二进制" {
+	if got, _ := os.ReadFile(self); string(got) != string(payload) {
 		t.Fatalf("原路径应是新版本，实际 %q", got)
 	}
 	// 备份是旧版本，起不来时靠它换回去。

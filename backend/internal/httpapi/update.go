@@ -119,7 +119,8 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Warn("已安装新版本，重启后生效",
-		"from", s.cfg.Version, "to", rel.Version, "backup", backup)
+		"from", s.cfg.Version, "to", rel.Version, "backup", backup,
+		"回滚保护", "新版本若起不来，下次启动会自动换回备份")
 
 	// 先把响应写完再退出，否则调用方拿到的是一个断开的连接而不是结果。
 	writeJSON(w, r, map[string]any{

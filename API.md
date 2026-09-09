@@ -192,7 +192,7 @@ curl -H "Authorization: Bearer okc_xxx" \
 | `POST /api/admin/clients/{clientID}/rollback` | 把某 client_id 下被误判为失效的账号回滚为未验证 |
 | `POST /api/admin/me/username` | `{username, current_password}` 改登录名。3 到 32 位，只收字母数字与 `. _ -`。重名返回 409 `USERNAME_EXISTS`，密码错返回 400 `WRONG_PASSWORD`。改名不影响任何会话 |
 | `GET /api/admin/update` | 当前版本与 GitHub 上的最新发布。返回 `{current, repo, supported, latest, available, reason?, error?}`，`latest` 含 `version`、`name`、`notes`、`url`、`published_at`、`asset_name`、`asset_size` |
-| `POST /api/admin/update/apply` | `{confirm_password}` 下载、校验并替换二进制，随后自动重启。返回 `{ok, installed, backup, restarting, message}`。开发版或未配 `UPDATE_REPO` 时返回 400 `UPDATE_DISABLED`，已是最新返回 400 `ALREADY_LATEST` |
+| `POST /api/admin/update/apply` | `{confirm_password}` 下载、校验并替换二进制，随后自动重启。返回 `{ok, installed, backup, restarting, message}`。开发版或未配 `UPDATE_REPO` 时返回 400 `UPDATE_DISABLED`，已是最新返回 400 `ALREADY_LATEST`。**替换前会先把新二进制跑一次 `-version`**，跑不起来或版本对不上就整个放弃，现役文件不受影响 |
 
 ### 导入
 

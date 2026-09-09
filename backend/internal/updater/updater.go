@@ -245,9 +245,28 @@ func (u *Updater) applyTo(ctx context.Context, rel *Release, self string) (backu
 		return "", err
 	}
 
+	// 换之前先把它跑一次。这一步是回滚机制的前提 ——
+	// 事后回滚依赖"起不来就重启后换回去"，而我们的重启走 execve，
+	// 没有进程守护时新版本一崩就没人再拉起它，回滚根本没机会执行。
+	// 试运行失败就整个放弃，现役二进制一个字节都不会被动。
+	if err = preflight(ctx, tmpName, rel.Version); err != nil {
+		return "", err
+	}
+
 	// 替换动作按平台分开实现：Unix 直接覆盖（内核按 inode 引用运行中的映像），
 	// Windows 必须先把自己改名让路。见 install_unix.go 与 install_windows.go。
-	return install(tmpName, self)
+	backup, err = install(tmpName, self)
+	if err != nil {
+		return "", err
+	}
+	// 写下待验证标记。新版本要自己活到对外服务那一刻才会把它删掉；
+	// 没删掉就重启了，下次启动会据此换回旧版本。见 rollback.go。
+	if perr := MarkPending(self); perr != nil {
+		// 标记写不下不该让整次更新失败 —— 二进制已经换好了。
+		// 只是失去了自动回滚这层保护，由日志说明。
+		return backup, nil
+	}
+	return backup, nil
 }
 
 // fetch 下载一个资源，限制最大体积。
