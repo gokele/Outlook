@@ -39,6 +39,8 @@ type Server struct {
 	restart func()
 
 	limiter *keyLimiter
+	// guard 限制登录尝试。密码哈希再强也挡不住无限次试错。
+	guard *loginGuard
 	// jobs 持有后台批量任务。放在进程内存里：任务是纯粹的过程量，
 	// 已完成的部分本来就落库了，重启丢的只是"还剩多少"这个显示。
 	jobs *jobs.Registry
@@ -50,7 +52,8 @@ func New(cfg *config.Config, st *store.Store, box *crypto.Box, ts *tokensvc.Serv
 	return &Server{
 		cfg: cfg, st: st, box: box, ts: ts, orch: orch, sched: sched,
 		imp: importer.New(st, box), log: log, limiter: &keyLimiter{},
-		jobs: jobs.NewRegistry(),
+		guard: newLoginGuard(),
+		jobs:  jobs.NewRegistry(),
 	}
 }
 

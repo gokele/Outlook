@@ -34,11 +34,43 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err, s.log)
 		return
 	}
-	u, err := s.st.GetUserByName(r.Context(), strings.TrimSpace(req.Username))
-	if err != nil || !crypto.VerifyPassword(u.PasswordHash, req.Password) {
+	name := strings.TrimSpace(req.Username)
+	ip := clientIP(r)
+
+	// 先看有没有被限速挡下。放在校验之前：被挡的请求根本不该消耗一次
+	// PBKDF2 计算，否则限速本身就成了打垮服务的手段。
+	if wait, blocked := s.guard.check(ip, name); blocked {
+		secs := int(wait.Seconds()) + 1
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		s.log.Warn("登录尝试被限速挡下", "ip", ip, "username", name, "retry_after", secs)
+		writeError(w, r, newAPIError(429, "TOO_MANY_ATTEMPTS",
+			fmt.Sprintf("登录尝试过于频繁，请 %d 秒后再试", secs)), s.log)
+		return
+	}
+
+	u, err := s.st.GetUserByName(r.Context(), name)
+
+	// 用户不存在时也要跑一次同样的哈希比较。
+	//
+	// 原来这里写成 `err != nil || !VerifyPassword(...)`，而 || 会短路 ——
+	// 用户不存在就完全不算哈希，响应快几十毫秒。这个时间差是个稳定的
+	// 用户名枚举探针：攻击者能先确定管理员叫什么，再把全部算力压在密码上。
+	ok := false
+	if err == nil {
+		ok = crypto.VerifyPassword(u.PasswordHash, req.Password)
+	} else {
+		crypto.DummyVerify(req.Password)
+	}
+	if !ok {
+		s.guard.fail(ip, name)
+		// 失败必须留痕，否则被爆破了也看不出来 —— 日志是唯一的信号。
+		// 只记用户名不记密码：把试过的密码写进日志，等于给日志读者一份字典。
+		s.log.Warn("登录失败", "ip", ip, "username", name)
 		writeError(w, r, newAPIError(401, "UNAUTHORIZED", "用户名或密码错误"), s.log)
 		return
 	}
+	s.guard.success(ip, name)
+	s.log.Info("登录成功", "ip", ip, "username", name)
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
 	token := hex.EncodeToString(b)
@@ -137,8 +169,9 @@ func (s *Server) handleChangeUsername(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, newAPIError(401, "UNAUTHORIZED", "账号不存在"), s.log)
 		return
 	}
-	if !crypto.VerifyPassword(cur.PasswordHash, req.CurrentPassword) {
-		writeError(w, r, newAPIError(400, "WRONG_PASSWORD", "当前密码不正确"), s.log)
+	if blocked := s.guardPassword(w, r, cur.Username, req.CurrentPassword,
+		cur.PasswordHash, "改名",
+		newAPIError(400, "WRONG_PASSWORD", "当前密码不正确")); blocked {
 		return
 	}
 
@@ -212,10 +245,23 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, newAPIError(401, "UNAUTHORIZED", "账号不存在"), s.log)
 		return
 	}
+	// 改密同样要限速。它接受的也是"当前密码"，而且请求带着有效会话 ——
+	// 一个被接管的浏览器可以在这里无限次猜密码，猜中就能顺势改掉它。
+	ip := clientIP(r)
+	if wait, blocked := s.guard.check(ip, cur.Username); blocked {
+		secs := int(wait.Seconds()) + 1
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		writeError(w, r, newAPIError(429, "TOO_MANY_ATTEMPTS",
+			fmt.Sprintf("尝试过于频繁，请 %d 秒后再试", secs)), s.log)
+		return
+	}
 	if !crypto.VerifyPassword(cur.PasswordHash, req.CurrentPassword) {
+		s.guard.fail(ip, cur.Username)
+		s.log.Warn("改密时当前密码校验失败", "ip", ip, "username", cur.Username)
 		writeError(w, r, newAPIError(400, "WRONG_PASSWORD", "当前密码不正确"), s.log)
 		return
 	}
+	s.guard.success(ip, cur.Username)
 	// 先判"与旧密码相同"再判长度：旧密码若本就短于下限（例如历史遗留的账号），
 	// 提示"至少 N 位"会让人困惑于自己明明在用的密码，"不能相同"才是真正的原因。
 	if req.NewPassword == req.CurrentPassword {

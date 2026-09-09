@@ -97,6 +97,31 @@ func HashPassword(pw string) (string, error) {
 		base64.RawStdEncoding.EncodeToString(dk)), nil
 }
 
+// dummyHash 是一份固定的口令散列，仅用于 DummyVerify。
+//
+// 值本身无关紧要 —— 它只是让"用户不存在"这条路径也付出一次真实的
+// PBKDF2 计算，从而与"用户存在但密码错"耗时相当。
+var dummyHash string
+
+func init() {
+	// 生成失败就留空，DummyVerify 会退回一次固定迭代的计算，效果一样。
+	dummyHash, _ = HashPassword("dummy-password-for-timing-equalization")
+}
+
+// DummyVerify 在用户不存在时消耗一次等量的哈希计算。
+//
+// 存在的理由是时序：登录路径上"用户不存在"若直接返回，响应会比
+// "用户存在但密码错"快几十毫秒，而这个差值稳定可测 ——
+// 攻击者据此就能枚举出管理员用户名，再把全部算力压在密码上。
+func DummyVerify(pw string) {
+	if dummyHash != "" {
+		_ = VerifyPassword(dummyHash, pw)
+		return
+	}
+	// 兜底：直接跑一次同参数的派生，耗时与正常校验同量级。
+	_ = pbkdf2.Key([]byte(pw), []byte("fallback-salt-16"), 210000, 32, sha256.New)
+}
+
 // VerifyPassword 以恒定时间比较校验登录密码。
 func VerifyPassword(stored, pw string) bool {
 	var iter int

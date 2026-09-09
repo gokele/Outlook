@@ -113,8 +113,9 @@ func (s *Server) handleExportAccounts(w http.ResponseWriter, r *http.Request) {
 		if userOf(r) != nil {
 			// 后台侧要求重新输入登录密码确认。
 			u := userOf(r)
-			if !crypto.VerifyPassword(u.PasswordHash, q.Get("confirm_password")) {
-				writeError(w, r, newAPIError(403, "CONFIRM_REQUIRED", "导出令牌需要重新输入登录密码确认"), s.log)
+			if blocked := s.guardPassword(w, r, u.Username, q.Get("confirm_password"),
+				u.PasswordHash, "导出令牌",
+				newAPIError(403, "CONFIRM_REQUIRED", "导出令牌需要重新输入登录密码确认")); blocked {
 				return
 			}
 		}

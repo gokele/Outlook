@@ -12,7 +12,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/kele/outlook-console/internal/crypto"
 	"github.com/kele/outlook-console/internal/updater"
 )
 
@@ -73,8 +72,13 @@ func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cur, err := s.st.GetUser(r.Context(), u.ID)
-	if err != nil || !crypto.VerifyPassword(cur.PasswordHash, req.ConfirmPassword) {
+	if err != nil {
 		writeError(w, r, newAPIError(403, "CONFIRM_REQUIRED", "安装更新需要重新输入登录密码"), s.log)
+		return
+	}
+	if blocked := s.guardPassword(w, r, cur.Username, req.ConfirmPassword,
+		cur.PasswordHash, "安装更新",
+		newAPIError(403, "CONFIRM_REQUIRED", "安装更新需要重新输入登录密码")); blocked {
 		return
 	}
 	if s.cfg.UpdateRepo == "" {

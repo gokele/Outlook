@@ -174,7 +174,7 @@ curl -X POST -H "Authorization: Bearer okc_xxx" -H 'Content-Type: application/js
 | 404 | `ACCOUNT_NOT_FOUND` / `NO_FREE_ACCOUNT` | 目标不存在。带 `project_key` 时 `NO_FREE_ACCOUNT` 的消息会说明该项目已用掉多少个，区分"这个项目用完了"与"池子空了"——两者处置完全不同 |
 | 409 | `ACCOUNT_DISABLED` / `ACCOUNT_LEASED` | 后者带 `data.remaining_seconds` |
 | 423 | `TOKEN_INVALID` | 授权码已失效，需重新导入。**没有缓存邮件可回退** |
-| 429 | `RATE_LIMITED` | 命中 Key 限流或账号最小拉取间隔，带 `Retry-After` |
+| 429 | `RATE_LIMITED` / `TOO_MANY_ATTEMPTS` | 前者是 Key 限流或账号最小拉取间隔，后者是登录与二次确认的密码尝试过于频繁。都带 `Retry-After` |
 | 502 | `UPSTREAM_ERROR` | 所有可用通道均失败 |
 | 499 | `CLIENT_CLOSED` | 请求被客户端取消。这不是故障，通常是页面切换或组件重新挂载所致 |
 | 504 | `UPSTREAM_TIMEOUT` | 上游超时 |
@@ -190,7 +190,7 @@ curl -X POST -H "Authorization: Bearer okc_xxx" -H 'Content-Type: application/js
 
 | 端点 | 说明 |
 |---|---|
-| `POST /api/admin/login` | `{username, password}`，成功后下发会话 Cookie |
+| `POST /api/admin/login` | `{username, password}`，成功后下发会话 Cookie。**有限速**：连续失败超过 4 次后按指数退避封禁（单 IP 最长 15 分钟，单用户名最长 60 秒），返回 429 `TOO_MANY_ATTEMPTS` 并带 `Retry-After`。封禁期内即使密码正确也会被挡——限速在校验之前生效 |
 | `POST /api/admin/logout` / `GET /api/admin/me` | 注销与取当前用户 |
 | `GET /api/admin/overview` | 总览。含 `by_status`、`by_category`、`fetch_7d`、`token_tiers`、`scheduler`（健康度与容量自检）、`suspended_clients`。`scheduler` 里的容量分两组：轮换的 `steady_rate_per_day` / `max_rate_per_day`，与首验的 `unverified` / `first_verify_per_day` / `first_verify_days`——两者性质不同，轮换需求按账号数除以阈值天数摊开，首验是导入那一刻全部堆进队列的 |
 | `GET /api/admin/accounts` | 列表。`q`、`category_id`、`status`、`channel`、`tag`、`domain`、`page`、`size`。`domain` 按邮箱后缀筛选，如 `outlook.com` |

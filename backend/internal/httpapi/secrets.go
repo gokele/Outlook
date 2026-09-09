@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kele/outlook-console/internal/crypto"
 	"github.com/kele/outlook-console/internal/model"
 )
 
@@ -65,10 +64,10 @@ func (s *Server) handleUnlockSecrets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errUnauthorized, s.log)
 		return
 	}
-	if !crypto.VerifyPassword(u.PasswordHash, in.Password) {
+	if blocked := s.guardPassword(w, r, u.Username, in.Password, u.PasswordHash, "解锁凭据",
+		newAPIError(403, "CONFIRM_REQUIRED", "登录密码不正确")); blocked {
 		// 试错比成功查看更值得留痕：一连串失败说明有人在拿别人的会话猜密码。
 		s.auditSecretAccess(0, "error", "CONFIRM_REQUIRED")
-		writeError(w, r, newAPIError(403, "CONFIRM_REQUIRED", "登录密码不正确"), s.log)
 		return
 	}
 	until := time.Now().Add(secretsUnlockFor).Unix()
