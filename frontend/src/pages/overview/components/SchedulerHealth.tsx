@@ -14,9 +14,13 @@ export function SchedulerHealthCard({ data }: SchedulerHealthProps) {
     p0: 0,
     p1: 0,
     backlog: 0,
+    unverified: 0,
     steady_rate_per_day: 0,
     max_rate_per_day: 0,
+    first_verify_per_day: 0,
+    first_verify_days: 0,
     healthy: true,
+    advice: '',
   };
 
   const steady = scheduler.steady_rate_per_day ?? 0;
@@ -38,12 +42,19 @@ export function SchedulerHealthCard({ data }: SchedulerHealthProps) {
       }
     >
       <Flex vertical gap={12}>
+        {/*
+          直接用后端给的 advice, 不在前端再写一份判断逻辑。
+          容量的计算规则在后端, 两处各写一份迟早会对不上。
+        */}
         {unhealthy ? (
           <Alert
             type="error"
             showIcon
             message="调度器状态异常"
-            description="稳态轮换需求已超出处理能力或积压持续增长, 令牌可能在 90 天窗口内来不及轮换。请提高最大速率或降低账号规模。"
+            description={
+              scheduler.advice ||
+              '稳态轮换需求已超出处理能力或积压持续增长, 令牌可能在 90 天窗口内来不及轮换。'
+            }
           />
         ) : null}
 
@@ -80,6 +91,33 @@ export function SchedulerHealthCard({ data }: SchedulerHealthProps) {
             />
           </Col>
         </Row>
+
+        {/*
+          首验排期单独列出。它与上面那组轮换指标是两回事：轮换需求按账号数
+          除以阈值天数摊开, 天然平缓; 首验是导入那一刻全部堆进队列的,
+          一次十万个也是一天之内产生的 —— 这一项此前完全看不到。
+        */}
+        {(scheduler.unverified ?? 0) > 0 ? (
+          <Row gutter={[16, 12]}>
+            <Col xs={12} md={12}>
+              <Tooltip title="从未验证过的账号数。批量导入后它们会全部堆在这个队列里">
+                <Statistic title="首验队列" value={scheduler.unverified ?? 0} />
+              </Tooltip>
+            </Col>
+            <Col xs={12} md={12}>
+              <Tooltip title="按当前首验速率, 把队列清空还需要的天数。导入的授权码年龄未知, 排期过长会出现「还没轮到首验就已过期」的账号">
+                <Statistic
+                  title="预计验完"
+                  value={scheduler.first_verify_days ?? 0}
+                  suffix="天"
+                  valueStyle={{
+                    color: (scheduler.first_verify_days ?? 0) > 30 ? '#ff4d4f' : undefined,
+                  }}
+                />
+              </Tooltip>
+            </Col>
+          </Row>
+        ) : null}
 
         <div>
           <Flex justify="space-between" gap={8}>

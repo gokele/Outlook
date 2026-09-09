@@ -9,6 +9,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"math/rand"
@@ -53,11 +54,20 @@ type Config struct {
 // DefaultConfig 返回默认参数。
 func DefaultConfig() Config {
 	return Config{
-		Enabled:             true,
-		PerIPPerMin:         10,
-		PerClientPerMin:     6,
-		Concurrency:         5,
-		P3PerMin:            1,
+		Enabled:         true,
+		PerIPPerMin:     10,
+		PerClientPerMin: 6,
+		Concurrency:     5,
+		// 首验速率。
+		//
+		// 原来是 1，那时的假设是「一次导入几千个」—— 五千个按 1/分钟要 3.5 天，
+		// 还算能接受。但现在单次导入十万个是支持的，1/分钟意味着 69 天，
+		// 期间那批账号的授权码很可能先过期了。
+		//
+		// 提到 3 仍然很保守：它排在所有优先级之后，只用轮换剩下的额度，
+		// 而单 client_id 的上限是 6/分钟 —— 稳态轮换需求（账号数除以 60 天）
+		// 通常只占其中一小部分，剩下的本来就闲着。
+		P3PerMin:            3,
 		EgressIPs:           1,
 		PerProxyConcurrency: 2,
 		Tick:                time.Minute,
@@ -464,6 +474,14 @@ type Health struct {
 	LastRunCount   int    `json:"last_run_count"`
 	RotateAfterDay int    `json:"rotate_after_days"`
 	FirstExpiryAt  int64  `json:"first_expiry_at"`
+	// FirstVerifyPerDay 是首验队列每天能处理多少个。
+	FirstVerifyPerDay int `json:"first_verify_per_day"`
+	// FirstVerifyDays 是按当前速率把未验证账号全部验完还需要多少天。
+	//
+	// 这一项此前完全没算过，而它是最容易出问题的地方：轮换容量按账号数
+	// 除以 60 天摊开，很宽裕；首验却是导入那一刻全部堆在队列里的，
+	// 十万个账号按每分钟 1 个要验 69 天 —— 期间它们的授权码可能已经先过期了。
+	FirstVerifyDays int `json:"first_verify_days"`
 }
 
 // CheckHealth 做容量自检：稳态需求速率对比理论最大速率，不足 1.5 倍即告警。
@@ -499,8 +517,14 @@ func (s *Scheduler) CheckHealth(ctx context.Context) (Health, error) {
 	byClient := cfg.PerClientPerMin * maxInt(clients, 1) * 1440
 	h.MaxPerDay = minInt(byIP, byClient)
 
+	// 首验单独算。它与轮换是两回事：轮换的需求按账号数除以阈值天数摊开，
+	// 天然平缓；首验是导入那一刻全部堆进队列的，一次十万个也是一天之内产生的。
+	h.FirstVerifyPerDay, h.FirstVerifyDays = firstVerifySchedule(stats.Unverified, cfg.P3PerMin)
+	firstVerifyLate := h.FirstVerifyDays > MaxFirstVerifyDays
+
 	// 调度器关闭时一律不健康：闲置账号会在 90 天后失效，无论容量多充足。
-	h.Healthy = cfg.Enabled && h.MaxPerDay >= int(float64(h.SteadyPerDay)*1.5) && stats.P0 == 0
+	h.Healthy = cfg.Enabled && h.MaxPerDay >= int(float64(h.SteadyPerDay)*1.5) &&
+		stats.P0 == 0 && !firstVerifyLate
 
 	// 关闭时算出第一个账号预计失效的日期，让代价可见。
 	if !cfg.Enabled {
@@ -513,6 +537,12 @@ func (s *Scheduler) CheckHealth(ctx context.Context) (Health, error) {
 		h.Advice = "调度器已关闭。闲置账号将在 90 天后失效，建议开启。"
 	case stats.P0 > 0:
 		h.Advice = "存在距硬到期不足 7 天的账号，调度已跟不上。请提高速率上限或增加出口代理。"
+	case firstVerifyLate:
+		h.Advice = fmt.Sprintf(
+			"首验队列还有 %d 个账号，按当前速率需要 %d 天才能验完。"+
+				"导入的授权码年龄未知，排期过长会出现「还没轮到首验就已过期」的账号。"+
+				"建议提高首验队列速率，或把账号分散到更多的应用注册。",
+			stats.Unverified, h.FirstVerifyDays)
 	case !h.Healthy && byClient < byIP:
 		h.Advice = "瓶颈在 client_id 维度。建议把账号分散到更多的应用注册，或提高单 client_id 速率上限。"
 	case !h.Healthy:
@@ -564,4 +594,23 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// MaxFirstVerifyDays 是首验排期的告警界。
+//
+// 30 天不是随手取的：导入进来的授权码年龄未知，最坏情况下它已经用掉了
+// 大半个 90 天窗口。排期比这还长，就可能出现"还没轮到首验就已经过期"的账号 ——
+// 而那种失败完全是排期造成的，不是账号本身的问题。
+const MaxFirstVerifyDays = 30
+
+// firstVerifySchedule 算出首验队列的日处理量与验完所需天数。
+//
+// 抽成纯函数是为了能直接测：要让排期超过 30 天需要四万多个未验证账号，
+// 在测试里真造出来不现实。
+func firstVerifySchedule(unverified, perMin int) (perDay, days int) {
+	perDay = perMin * 1440
+	if perDay <= 0 || unverified <= 0 {
+		return perDay, 0
+	}
+	return perDay, int(math.Ceil(float64(unverified) / float64(perDay)))
 }

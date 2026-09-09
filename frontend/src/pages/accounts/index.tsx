@@ -13,7 +13,8 @@ import type { AccountsSearch } from '@/lib/router/searchSchemas';
 import { AccountFilters } from './components/AccountFilters';
 import { AccountTable } from './components/AccountTable';
 import { ApiError } from '@/api/request';
-import { startVerifyJob } from '@/api/jobs';
+import { fetchJobs, startVerifyJob } from '@/api/jobs';
+import { useQuery } from '@tanstack/react-query';
 import { BatchActionBar } from './components/BatchActionBar';
 import { JobProgress } from './components/JobProgress';
 import type { BatchUpdateMode, BatchUpdateValue } from './components/BatchUpdateContent';
@@ -42,8 +43,32 @@ export default function AccountsPage() {
   const [editing, setEditing] = useState<Account | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | number | null>(null);
-  // 正在跑的批量任务 id。只留一个 —— 后端也只允许同类任务跑一个。
-  const [jobId, setJobId] = useState<string | null>(null);
+  // 手动关掉的任务面板。关掉之后不再自动弹回来 ——
+  // 否则一个已结束的任务会一直挡在列表上方。
+  const [dismissedJob, setDismissedJob] = useState<string | null>(null);
+
+  /**
+   * 自动发现正在跑的任务。
+   *
+   * 不把任务 id 留在组件的 state 里, 是因为那样一离开页面就丢了 ——
+   * 任务在后台照跑, 界面上却再也找不到它, 只能干等。改成每次进入页面时
+   * 问一次后端有没有在跑的任务, 刷新页面、换个标签页回来都能接上。
+   */
+  const { data: jobList } = useQuery({
+    queryKey: queryKeys.jobs.list(),
+    queryFn: fetchJobs,
+    // 有任务在跑时勤问一点, 空闲时退到 15 秒 —— 这个查询很轻,
+    // 但没必要在没人跑任务的时候一直打。
+    refetchInterval: (q) =>
+      q.state.data?.items.some((j) => j.status === 'running') ? 3000 : 15000,
+    retry: false,
+  });
+
+  const activeJob = jobList?.items.find((j) => j.status === 'running');
+  // 面板显示的优先是运行中的任务; 没有运行中的就显示最近一个,
+  // 好让人看到刚跑完的结果, 除非已经被手动关掉。
+  const shownJob = activeJob ?? jobList?.items[0];
+  const jobId = shownJob && shownJob.id !== dismissedJob ? shownJob.id : null;
 
   const { items, total, isPending, isFetching, error, refetch, params } = useAccountList(search);
   const mutations = useAccountMutations();
@@ -143,8 +168,10 @@ export default function AccountsPage() {
     }
     try {
       const job = await startVerifyJob({ ids: selectedKeys });
-      setJobId(job.id);
+      setDismissedJob(null);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.root });
       setSelectedKeys([]);
+      void job;
       toast.success(`已转为后台任务，共 ${job.total} 个账号，可随时取消`);
     } catch (error) {
       toast.error(
@@ -251,7 +278,7 @@ export default function AccountsPage() {
             void queryClient.invalidateQueries({ queryKey: queryKeys.accounts.root });
             void queryClient.invalidateQueries({ queryKey: queryKeys.overview.root });
           }}
-          onDismiss={() => setJobId(null)}
+          onDismiss={() => setDismissedJob(jobId)}
         />
       ) : null}
 

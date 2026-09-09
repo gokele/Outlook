@@ -118,9 +118,17 @@ export interface SchedulerHealth {
   p0: number;
   p1: number;
   backlog: number;
+  /** 从未验证过的账号数, 即首验队列长度 */
+  unverified: number;
   steady_rate_per_day: number;
   max_rate_per_day: number;
+  /** 首验队列每天能处理多少个 */
+  first_verify_per_day: number;
+  /** 按当前速率把未验证账号全部验完还需要多少天 */
+  first_verify_days: number;
   healthy: boolean;
+  /** 不健康时的针对性建议 */
+  advice: string;
 }
 
 /** 被熔断的 client_id 及其恢复时间 */

@@ -340,3 +340,43 @@ func TestSpreadByProxyUnassignedGroupedTogether(t *testing.T) {
 		t.Fatalf("未分配出口的任务不应被丢弃, 实际 %d 个", len(got))
 	}
 }
+
+// TestFirstVerifySchedule 校验首验排期的计算。
+//
+// 这是原来的盲区：轮换容量按账号数除以 60 天摊开，永远显得很宽裕；
+// 首验却是导入那一刻全部堆进队列的。十万个账号按每分钟 1 个要验 69 天，
+// 期间它们的授权码很可能已经先过期了 —— 而自检对此一无所知。
+func TestFirstVerifySchedule(t *testing.T) {
+	cases := []struct {
+		unverified, perMin  int
+		wantPerDay, wantDay int
+		desc                string
+	}{
+		{5000, 1, 1440, 4, "五千个按 1/分钟约四天，这是原来默认值的量级"},
+		{100000, 1, 1440, 70, "十万个按 1/分钟要 70 天，授权码可能先过期"},
+		{100000, 3, 4320, 24, "提到 3/分钟后压到 24 天，回到安全区"},
+		{0, 3, 4320, 0, "队列为空时不该算出排期"},
+		{100, 0, 0, 0, "速率为 0 时不该除零"},
+		{1, 1, 1440, 1, "不足一天也记作一天，不显示 0"},
+	}
+	for _, c := range cases {
+		perDay, days := firstVerifySchedule(c.unverified, c.perMin)
+		if perDay != c.wantPerDay || days != c.wantDay {
+			t.Errorf("%s: 期望 %d/天 %d 天，实际 %d/天 %d 天",
+				c.desc, c.wantPerDay, c.wantDay, perDay, days)
+		}
+	}
+}
+
+// TestDefaultP3CoversLargeImport 校验默认速率能撑住一次大批量导入。
+//
+// 单次导入十万个账号是支持的（见 importer.Stream），默认首验速率必须
+// 让这批账号在告警界之内验完，否则默认值本身就是个陷阱。
+func TestDefaultP3CoversLargeImport(t *testing.T) {
+	const largeImport = 100000
+	_, days := firstVerifySchedule(largeImport, DefaultConfig().P3PerMin)
+	if days > MaxFirstVerifyDays {
+		t.Fatalf("默认首验速率下，十万个账号要 %d 天才验完，超过 %d 天的告警界",
+			days, MaxFirstVerifyDays)
+	}
+}

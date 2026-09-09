@@ -150,7 +150,7 @@ curl -H "Authorization: Bearer okc_xxx" \
 |---|---|
 | `POST /api/admin/login` | `{username, password}`，成功后下发会话 Cookie |
 | `POST /api/admin/logout` / `GET /api/admin/me` | 注销与取当前用户 |
-| `GET /api/admin/overview` | 总览。含 `by_status`、`by_category`、`fetch_7d`、`token_tiers`、`scheduler`（健康度与容量自检）、`suspended_clients` |
+| `GET /api/admin/overview` | 总览。含 `by_status`、`by_category`、`fetch_7d`、`token_tiers`、`scheduler`（健康度与容量自检）、`suspended_clients`。`scheduler` 里的容量分两组：轮换的 `steady_rate_per_day` / `max_rate_per_day`，与首验的 `unverified` / `first_verify_per_day` / `first_verify_days`——两者性质不同，轮换需求按账号数除以阈值天数摊开，首验是导入那一刻全部堆进队列的 |
 | `GET /api/admin/accounts` | 列表。`q`、`category_id`、`status`、`channel`、`tag`、`page`、`size` |
 | `GET /api/admin/accounts/{id}` | 单账号，详情页深链用 |
 | `PATCH /api/admin/accounts/{id}` | `{category_id?, clear_category?, note?, channel_policy?, disabled?, tags?}` |
