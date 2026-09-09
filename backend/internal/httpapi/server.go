@@ -171,6 +171,9 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/mail/raw", s.handleMailRaw)
 		r.Get("/mail/export", s.handleMailExport)
 		r.Delete("/mail/lease/{id}", s.handleReleaseLease)
+		// 收尾上报：比单纯释放多做两件事 —— 成功时在项目维度记账，
+		// 失败时给账号加冷却，避免它立刻被下一个调用方拿到又失败一次。
+		r.Post("/mail/complete/{id}", s.handleCompleteLease)
 		r.Get("/accounts", s.handleAPIListAccounts)
 		r.Get("/accounts/export", s.handleExportAccounts)
 		r.Post("/accounts/import", s.handleImport)

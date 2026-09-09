@@ -210,10 +210,22 @@ func (s *Server) handleMailClaim(w http.ResponseWriter, r *http.Request) {
 			ttl = time.Duration(n) * time.Second
 		}
 	}
-	acc, lease, err := s.st.ClaimFreeAccount(r.Context(), catID, key.ID, ttl)
+	projectKey := q.Get("project_key")
+	acc, lease, err := s.st.ClaimFreeAccount(r.Context(), store.ClaimOptions{
+		CategoryID: catID, APIKeyID: key.ID, TTL: ttl, ProjectKey: projectKey,
+	})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, r, newAPIError(404, "NO_FREE_ACCOUNT", "该范围内没有空闲账号"), s.log)
+			// 带 project_key 时要说清楚是"这个项目用完了"还是"池子空了" ——
+			// 两者的处置完全不同：前者要加账号，后者只需等别人释放。
+			msg := "该范围内没有空闲账号"
+			if store.NormalizeProjectKey(projectKey) != "" {
+				used, _ := s.st.ProjectUsedCount(r.Context(), projectKey)
+				msg = fmt.Sprintf(
+					"该范围内没有可用于项目 %q 的账号（已在该项目上用掉 %d 个）。"+
+						"要么等占用中的账号释放，要么补充新账号", projectKey, used)
+			}
+			writeError(w, r, newAPIError(404, "NO_FREE_ACCOUNT", msg), s.log)
 			return
 		}
 		writeError(w, r, mapStoreError(err), s.log)
@@ -226,6 +238,19 @@ func (s *Server) handleMailClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	res, ferr := s.orch.Fetch(r.Context(), req)
 	if ferr != nil && !errors.Is(ferr, orchestrator.ErrNoMessage) {
+		// 取件失败就把刚建立的租约退掉。
+		//
+		// 调用方拿到的是一个错误，他并不知道自己已经占了一个账号 ——
+		// 不退的话这个账号会被占到租约过期（最长 30 分钟），而调用方
+		// 只会重试，于是每重试一次就烧掉池子里的一个账号。几次之后
+		// 整个池子就空了，报的还是"没有空闲账号"，与真正的原因毫无关系。
+		//
+		// ErrNoMessage 不在此列：那是领取成功的正常结局 ——
+		// 账号归你了，邮件稍后才会到。
+		if rerr := s.st.ReleaseLease(r.Context(), acc.ID, key.ID); rerr != nil {
+			s.log.Warn("取件失败后释放租约失败，该账号将被占用到租约过期",
+				"account", acc.Email, "err", rerr)
+		}
 		writeError(w, r, mapFetchError(ferr), s.log)
 		return
 	}
@@ -403,3 +428,93 @@ func safeName(s string) string {
 }
 
 var _ = chi.URLParam
+
+// completeReq 是一次使用的收尾上报。
+type completeReq struct {
+	// Result 取 success 或 fail。
+	//
+	// 只有 success 才在项目维度记账 —— 失败的原因五花八门（验证码没收到、
+	// 对方站点抽风、中途放弃），下次换个时间重试完全合理。只有确实注册成功了，
+	// 才构成"这个邮箱在这个项目上已经用掉"。
+	Result string `json:"result"`
+	// ProjectKey 是项目标识。留空则只释放租约，不做项目记账。
+	ProjectKey string `json:"project_key"`
+	// CooldownSeconds 是失败后的冷却时长，0 取默认值。
+	CooldownSeconds int `json:"cooldown_seconds"`
+}
+
+// defaultFailCooldown 是失败后的默认冷却时长。
+//
+// 不冷却的话，刚失败的账号会立刻被下一个调用方拿到 —— 领取按 last_fetch_at
+// 升序挑，刚用过的反而排在最前。而刚失败的账号大概率接着失败，
+// 于是同一个账号被反复领走、反复失败，把整个池子卡住。
+const defaultFailCooldown = 10 * time.Minute
+
+// handleCompleteLease 上报一次使用的结局并释放账号。
+// POST /api/v1/mail/complete/{id}
+func (s *Server) handleCompleteLease(w http.ResponseWriter, r *http.Request) {
+	key := apiKeyOf(r)
+	if key == nil {
+		writeError(w, r, errUnauthorized, s.log)
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		writeError(w, r, err, s.log)
+		return
+	}
+	var req completeReq
+	if r.Body != nil && r.ContentLength != 0 {
+		if derr := decodeJSON(r, &req); derr != nil {
+			writeError(w, r, derr, s.log)
+			return
+		}
+	}
+
+	result := store.ProjectResult(strings.ToLower(strings.TrimSpace(req.Result)))
+	if result != store.ProjectSuccess && result != store.ProjectFail {
+		writeError(w, r, newAPIError(400, "BAD_REQUEST",
+			"result 必须是 success 或 fail"), s.log)
+		return
+	}
+
+	// 只有租约持有者能收尾。否则任何 Key 都能把别人正在用的账号标成已完成，
+	// 那个账号会立刻被别人领走，而原调用方还在等验证码。
+	lease, lerr := s.st.GetLease(r.Context(), id)
+	if lerr != nil {
+		writeError(w, r, lerr, s.log)
+		return
+	}
+	if lease != nil && lease.APIKeyID != key.ID {
+		writeError(w, r, newAPIError(403, "LEASE_DENIED",
+			"该账号的租约属于其他调用方"), s.log)
+		return
+	}
+
+	if perr := s.st.RecordProjectUse(r.Context(), id, req.ProjectKey, result); perr != nil {
+		writeError(w, r, perr, s.log)
+		return
+	}
+	if result == store.ProjectFail {
+		d := defaultFailCooldown
+		if req.CooldownSeconds > 0 {
+			d = time.Duration(req.CooldownSeconds) * time.Second
+		}
+		if cerr := s.st.SetCooldown(r.Context(), id, d); cerr != nil {
+			writeError(w, r, cerr, s.log)
+			return
+		}
+	}
+	if rerr := s.st.ReleaseLease(r.Context(), id, key.ID); rerr != nil {
+		writeError(w, r, rerr, s.log)
+		return
+	}
+
+	out := map[string]any{"ok": true, "result": string(result), "released": true}
+	if store.NormalizeProjectKey(req.ProjectKey) != "" {
+		out["project_key"] = store.NormalizeProjectKey(req.ProjectKey)
+		used, _ := s.st.ProjectUsedCount(r.Context(), req.ProjectKey)
+		out["project_used"] = used
+	}
+	writeJSON(w, r, out)
+}

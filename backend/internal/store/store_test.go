@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,7 +234,7 @@ func TestClaimFreeAccountSkipsLeased(t *testing.T) {
 	if _, err := st.AcquireLease(ctx, a, 1, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := st.ClaimFreeAccount(ctx, nil, 2, time.Minute)
+	got, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 2, TTL: time.Minute})
 	if err != nil {
 		t.Fatalf("应能领到未占用的账号: %v", err)
 	}
@@ -462,5 +463,90 @@ func TestTagManagement(t *testing.T) {
 	}
 	if _, ok := byName()["批次A"]; ok {
 		t.Error("标签应已删除")
+	}
+}
+
+// TestClaimProjectIsolation 校验项目隔离：同一个邮箱在 A 项目用过就不再被 A 领取，
+// 但换成 B 项目照样能领。这正是账号池能被复用的前提 ——
+// 没有这个维度，调用方只能自己在外面记账，记错一次就是一批注册失败。
+func TestClaimProjectIsolation(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	a := mkAccount(t, st, "p1@outlook.com", 0, 0)
+
+	// 领取并按成功收尾。
+	got, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 1, TTL: time.Minute, ProjectKey: "siteA"})
+	if err != nil || got.ID != a {
+		t.Fatalf("首次领取应拿到账号: %v", err)
+	}
+	if err := st.ReleaseLease(ctx, a, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordProjectUse(ctx, a, "siteA", ProjectSuccess); err != nil {
+		t.Fatal(err)
+	}
+
+	// 同一项目不该再领到它。
+	if _, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 1, TTL: time.Minute, ProjectKey: "siteA"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("同一项目应领不到，实际 %v", err)
+	}
+	// 大小写与空白不该绕过隔离 —— 那种失效是静默的。
+	if _, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 1, TTL: time.Minute, ProjectKey: " SITEA "}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("项目标识应归一化后比对，实际 %v", err)
+	}
+	// 换个项目照样能领。
+	got2, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 1, TTL: time.Minute, ProjectKey: "siteB"})
+	if err != nil || got2.ID != a {
+		t.Fatalf("换项目应能领到同一个账号: %v", err)
+	}
+	_ = st.ReleaseLease(ctx, a, 1)
+	// 不带项目标识时退回原语义，只看租约。
+	if _, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 1, TTL: time.Minute}); err != nil {
+		t.Fatalf("不带项目标识应保持原有语义: %v", err)
+	}
+}
+
+// TestClaimSkipsCooldown 校验冷却期内的账号不会被领取。
+//
+// 不冷却的话，刚失败的账号会立刻被下一个调用方拿到 —— 领取按 last_fetch_at
+// 升序挑，刚用过的反而排在最前，于是同一个账号被反复领走、反复失败。
+func TestClaimSkipsCooldown(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	a := mkAccount(t, st, "c1@outlook.com", 0, 0)
+
+	if err := st.SetCooldown(ctx, a, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 1, TTL: time.Minute}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("冷却期内不该被领取，实际 %v", err)
+	}
+
+	// 冷却结束后恢复可领取。
+	if err := st.SetCooldown(ctx, a, -time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 1, TTL: time.Minute}); err != nil {
+		t.Fatalf("冷却结束后应可领取: %v", err)
+	}
+}
+
+// TestRecordProjectFailClearsRecord 校验失败会清掉记录，允许同项目重试。
+// 失败的原因五花八门，下次换个时间重试完全合理。
+func TestRecordProjectFailClearsRecord(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	a := mkAccount(t, st, "f1@outlook.com", 0, 0)
+
+	_ = st.RecordProjectUse(ctx, a, "siteA", ProjectSuccess)
+	if n, _ := st.ProjectUsedCount(ctx, "siteA"); n != 1 {
+		t.Fatalf("成功应计入，实际 %d", n)
+	}
+	_ = st.RecordProjectUse(ctx, a, "siteA", ProjectFail)
+	if n, _ := st.ProjectUsedCount(ctx, "siteA"); n != 0 {
+		t.Fatalf("失败应清掉记录，实际 %d", n)
+	}
+	if _, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 1, TTL: time.Minute, ProjectKey: "siteA"}); err != nil {
+		t.Fatalf("清掉记录后应可重新领取: %v", err)
 	}
 }

@@ -112,7 +112,8 @@ curl -H "Authorization: Bearer okc_xxx" \
 | 端点 | 说明 |
 |---|---|
 | `GET /api/v1/mail/list` | 取最近若干封，参数同上但忽略 `wait` |
-| `GET /api/v1/mail/claim` | 按分类领取一个空闲账号并加租约。参数 `category_id`、`lease`。**缺省只返回租约获取之后到达的邮件**，避免把上一轮的旧验证码当成新的 |
+| `GET /api/v1/mail/claim` | 按分类领取一个空闲账号并加租约。参数 `category_id`、`lease`、`project_key`。**缺省只返回租约获取之后到达的邮件**，避免把上一轮的旧验证码当成新的。带 `project_key` 时启用项目隔离：已在该项目上成功用过的账号不会被再次领取，换个项目照样能用。取件失败时租约会被自动退回，不占用账号 |
+| `POST /api/v1/mail/complete/{account_id}` | 上报一次使用的结局并释放账号。body `{result, project_key?, cooldown_seconds?}`，`result` 取 `success` 或 `fail`。**只有 success 才在项目维度记账**——失败的原因五花八门，下次重试完全合理。fail 会给账号加冷却（默认 10 分钟），避免它立刻被下一个调用方拿到又失败一次。只有租约持有者能调用 |
 | `GET /api/v1/mail/raw` | 参数 `email`、`message_id`、`channel`，返回原始 MIME 供 .eml 下载 |
 | `GET /api/v1/mail/export` | 在线取件后流式输出。`format=csv\|json`，`limit` 默认 50 上限 200 |
 | `DELETE /api/v1/mail/lease/{account_id}` | 提前释放本 Key 持有的租约 |
@@ -120,6 +121,30 @@ curl -H "Authorization: Bearer okc_xxx" \
 | `GET /api/v1/accounts/export` | `format=txt\|csv\|json`。含令牌需 `include_secrets=true` 且 Key 开启 `allow_export_secrets`，同时必须限定范围：`ids=1,2,3` 或任一筛选条件。文件名形如 `outlook-accounts-SECRETS-sel-3-20260909-123045.txt`，依次是含令牌标记、范围、条数与时间 |
 | `POST /api/v1/accounts/import` | 批量导入，body 见下 |
 | `POST /api/v1/accounts/{id}/verify` | 强制轮换一次，确认授权码有效并重置 90 天 |
+
+### 项目隔离
+
+批量注册里最实际的一个约束是：**同一个邮箱在 A 站注册过就不能再注册 A 站，
+但注册 B 站完全没问题。** 租约只解决"同一时刻别让两方拿到同一个账号"，
+解决不了这个。
+
+```bash
+# 领取时带上项目标识
+curl -H "Authorization: Bearer okc_xxx" \
+  "https://console.example.com/api/v1/mail/claim?project_key=siteA&lease=300"
+
+# 用完上报结局
+curl -X POST -H "Authorization: Bearer okc_xxx" -H 'Content-Type: application/json' \
+  -d '{"result":"success","project_key":"siteA"}' \
+  "https://console.example.com/api/v1/mail/complete/1024"
+```
+
+之后 `project_key=siteA` 再也领不到这个账号，而 `project_key=siteB` 照常能领。
+
+`project_key` 会去空白并转小写后比对。调用方常在不同地方写成 `SiteA`、`sitea`、
+` siteA `，按字面区分的话同一个项目会被当成三个，**而这种失效是静默的**。
+
+不带 `project_key` 时退回原来的语义（只看租约），老的调用方不受影响。
 
 ### 错误码
 
@@ -129,7 +154,7 @@ curl -H "Authorization: Bearer okc_xxx" \
 | 400 | `BAD_REQUEST` / `SCOPE_REQUIRED` / `BATCH_TOO_LARGE` | 参数问题 |
 | 401 | `UNAUTHORIZED` | Key 缺失、错误或已吊销 |
 | 403 | `SCOPE_DENIED` / `LEASE_DENIED` / `EXPORT_DENIED` / `IP_DENIED` | 权限不足 |
-| 404 | `ACCOUNT_NOT_FOUND` / `NO_FREE_ACCOUNT` | 目标不存在 |
+| 404 | `ACCOUNT_NOT_FOUND` / `NO_FREE_ACCOUNT` | 目标不存在。带 `project_key` 时 `NO_FREE_ACCOUNT` 的消息会说明该项目已用掉多少个，区分"这个项目用完了"与"池子空了"——两者处置完全不同 |
 | 409 | `ACCOUNT_DISABLED` / `ACCOUNT_LEASED` | 后者带 `data.remaining_seconds` |
 | 423 | `TOKEN_INVALID` | 授权码已失效，需重新导入。**没有缓存邮件可回退** |
 | 429 | `RATE_LIMITED` | 命中 Key 限流或账号最小拉取间隔，带 `Retry-After` |
