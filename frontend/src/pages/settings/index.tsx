@@ -3,6 +3,7 @@ import { Alert, Button, Space } from 'antd';
 import { PageContainer } from '@/components/common/PageContainer';
 import { QueryStateView } from '@/components/common/QueryStateView';
 import { SettingsForm } from './components/SettingsForm';
+import { UpdatePanel } from './components/UpdatePanel';
 import { useSaveSettings, useSettings } from './hooks/useSettings';
 
 /**
@@ -24,6 +25,8 @@ export default function SettingsPage() {
       }
     >
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <UpdatePanel />
+
         <Alert
           type="warning"
           showIcon

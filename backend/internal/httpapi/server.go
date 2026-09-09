@@ -3,6 +3,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,7 @@ import (
 	"github.com/kele/outlook-console/internal/scheduler"
 	"github.com/kele/outlook-console/internal/store"
 	"github.com/kele/outlook-console/internal/tokensvc"
+	"github.com/kele/outlook-console/web"
 )
 
 // Server 持有全部依赖并挂载路由。
@@ -30,6 +32,10 @@ type Server struct {
 	log   *slog.Logger
 	// pool 为 nil 表示未启用账号级出口隔离。
 	pool *proxypool.Pool
+	// beforeRestart 在重启前做优雅收尾（停 HTTP、收编排器队列）。
+	beforeRestart func()
+	// restart 是原地换映像失败时的退路：退出进程，交给 systemd 之类的守护拉起。
+	restart func()
 
 	limiter *keyLimiter
 }
@@ -49,6 +55,14 @@ func New(cfg *config.Config, st *store.Store, box *crypto.Box, ts *tokensvc.Serv
 // 以及无需认证的健康检查。前后端同源部署，不开放跨域。// SetPool 注入代理池，启用账号级出口隔离。
 // 用注入而不是构造参数，是为了让未配置代理的部署与测试保持原样。
 func (s *Server) SetPool(p *proxypool.Pool) { s.pool = p }
+
+// SetRestart 注入收尾动作与退出兜底。
+//
+// 正常路径是原地 execve 换映像，不需要任何进程守护；exit 只在 exec 失败时用到，
+// 那时若没有守护进程，退出等于停服，因此由调用方决定要不要提供。
+func (s *Server) SetRestart(before, exit func()) {
+	s.beforeRestart, s.restart = before, exit
+}
 
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
@@ -72,6 +86,8 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/me", s.handleMe)
 			// 改密属于个人操作，只读账号也能改自己的密码，因此不在 requireAdmin 组内。
 			r.Post("/me/password", s.handleChangePassword)
+			// 改登录名同样是个人操作，只读账号也能改自己的。
+			r.Post("/me/username", s.handleChangeUsername)
 			r.Get("/overview", s.handleOverview)
 
 			r.Get("/accounts", s.handleListAccounts)
@@ -125,6 +141,9 @@ func (s *Server) Handler() http.Handler {
 				r.Put("/settings", s.handlePutSettings)
 				r.Delete("/logs", s.handleDeleteLogs)
 				r.Post("/clients/{clientID}/rollback", s.handleRollbackInvalid)
+				// 在线更新：查状态只读，安装要重新验密码。
+				r.Get("/update", s.handleUpdateStatus)
+				r.Post("/update/apply", s.handleApplyUpdate)
 			})
 		})
 	})
@@ -144,6 +163,28 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/accounts/{id}/verify", s.handleVerifyAccount)
 		r.Post("/accounts/batch/verify", s.handleBatchVerify)
 		r.Delete("/accounts/{id}", s.handleDeleteAccount)
+	})
+
+	// 前端。放在最后作为兜底：所有没被上面路由认领的路径都交给单页应用，
+	// 客户端路由才能接管 /accounts/123 这类深链。
+	//
+	// /api 前缀单独挡掉：写错的接口路径应该拿到 JSON 404，
+	// 而不是一份 HTML —— 后者会让调用方的 JSON 解析炸在一个毫不相干的地方。
+	spa := web.Handler()
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeError(w, r, newAPIError(404, "NOT_FOUND", "接口不存在"), s.log)
+			return
+		}
+		spa.ServeHTTP(w, r)
+	})
+	// 方法不匹配同样区分对待，理由同上。
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeError(w, r, newAPIError(405, "METHOD_NOT_ALLOWED", "请求方法不被支持"), s.log)
+			return
+		}
+		spa.ServeHTTP(w, r)
 	})
 
 	return r

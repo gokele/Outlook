@@ -5,6 +5,14 @@ backend/logs/
 frontend/dist/
 frontend/node_modules/
 
+# 嵌进二进制的前端产物。由构建步骤从 frontend/dist 拷入，不进版本库。
+# 保留 .gitkeep：go:embed 要求目录存在，否则新克隆的仓库连 go build 都过不去。
+backend/web/dist/*
+!backend/web/dist/.gitkeep
+
+# 在线更新替换二进制时留下的上一版
+*.old
+
 # 本地开发数据库。SQLite 只用于开发与测试，不应进版本库。
 *.db
 *.db-shm

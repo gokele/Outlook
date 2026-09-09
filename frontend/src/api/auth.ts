@@ -20,6 +20,17 @@ export function fetchMe() {
   return request<{ user: AdminUser }>('/admin/me', { silent: true, skipAuthRedirect: true });
 }
 
+/**
+ * 修改当前登录账号的登录名。
+ *
+ * 需要当前密码: 改名比改密码更不可逆 —— 拿到会话的人把名字一改,
+ * 机主连登录框都过不去, 而系统没有找回流程。
+ * 改名不影响任何会话, 所有设备上的登录都继续有效。
+ */
+export function changeUsername(payload: { username: string; current_password: string }) {
+  return request<{ user: AdminUser }>('/admin/me/username', { method: 'POST', body: payload });
+}
+
 /** 修改当前登录账号的密码。成功后其他设备上的会话会被撤销, 当前会话保留 */
 export function changePassword(payload: { current_password: string; new_password: string }) {
   return request<{ ok: boolean }>('/admin/me/password', { method: 'POST', body: payload });

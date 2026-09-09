@@ -25,6 +25,11 @@ type Config struct {
 	// 之前所有的隔离努力作废；而代理故障通常是暂时的，顺延等待的代价小得多。
 	// 只有在"取件必须成功"优先于风控的场景才打开。
 	AllowDirectFallback bool
+	// Version 是构建时通过 ldflags 注入的版本号，不来自环境变量。
+	// 值为 dev 时表示本地构建，在线更新对它一律不生效。
+	Version string
+	// UpdateRepo 是在线更新的来源仓库，形如 owner/name。留空即关闭在线更新。
+	UpdateRepo string
 }
 
 // Load 读取环境变量并校验必填项。
@@ -37,6 +42,7 @@ func Load() (*Config, error) {
 		Dev:         env("APP_ENV", "dev") == "dev",
 
 		AllowDirectFallback: env("PROXY_ALLOW_DIRECT_FALLBACK", "false") == "true",
+		UpdateRepo:          env("UPDATE_REPO", "gokele/Outlook"),
 	}
 
 	mk := os.Getenv("MASTER_KEY")

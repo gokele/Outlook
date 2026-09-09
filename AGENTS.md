@@ -27,10 +27,13 @@ backend/          Go API 服务
     scheduler/    常驻轮换调度器，到期时间驱动
     importer/     批量导入与三层去重
     httpapi/      后台与开放 API 的 HTTP 处理
+    updater/      从 GitHub Releases 拉新版、校验散列、替换二进制与重启
+  web/            前端产物的 go:embed 封装与单页应用静态服务
 frontend/         React 19 + Vite + TanStack Router/Query + Ant Design 5
+.github/workflows/ CI（跑 PostgreSQL）与 Release（交叉编译四平台）
 ```
 
-部署脚本尚未纳入版本库，待补。
+systemd unit 与反代配置尚未纳入版本库，待补。
 
 ## 偏离默认规范的地方
 
@@ -38,7 +41,8 @@ frontend/         React 19 + Vite + TanStack Router/Query + Ant Design 5
 
 - **未使用 sqlc，改为手写 SQL 加 `database/sql`。** 原因：sqlc 需要按引擎各生成一套代码，两套实现会随时间发散。现在一套 SQL 同时跑 PostgreSQL 与 SQLite，差异只有取任务的加锁子句一处（`store.forUpdateSkipLocked`）与占位符改写（`store.rebind`）。影响范围：`internal/store` 内部，上层不感知。
 - **IMAP 与 POP3 用标准库手写协议交互，未引入 emersion/go-imap。** 原因：避免第三方库的版本与行为风险，协议交互本身不复杂。影响范围：`internal/fetcher`。
-- **未使用容器。** 生产直接跑 systemd 加 Nginx 加 PostgreSQL。影响范围：部署脚本，尚未提交。
+- **未使用容器。** 生产直接跑一个二进制加 PostgreSQL。影响范围：部署配置，尚未提交。
+- **前端嵌进后端二进制**（`web` 包的 `go:embed`），不由 Nginx 托管静态文件。原因：前后端版本天然绑定，不会出现前端已更新而后端是旧版、接口对不上的情况；部署也退化成拷一个文件。代价是二进制从 16 MB 涨到 25 MB，且改前端也要重新编译后端。影响范围：`web/`、`internal/httpapi/server.go` 的兜底路由、构建流程。
 - **前端 UI 库锁定 Ant Design 5**，符合 `/enterprise-ui` 规范的默认选型（React 中后台首选）。曾用 shadcn/ui + Tailwind 重写过一版，因为需要自己做全部视觉决策（配色、圆角、密度、卡片风格逐项反复确认）而回退。**结论：不要再换库。** antd 自带成熟默认视觉，`ConfigProvider` 的 Design Token 三层结构足以承载品牌色定制；真要提升观感，优先做两件事——配 `colorPrimary` 主色、引入 ProComponents（ProTable 内置筛选栏/列设置/密度切换/批量操作）。
   - Arco Design 评估过并搭过并排 demo：纯 React 单栈用不上它的双栈优势，且在 React 19 下触发 `element.ref was removed` 警告，兼容性需另行评估。TDesign 定位多端统一，本项目无此需求。
   - React 19 兼容依赖 `@ant-design/v5-patch-for-react-19`，不可移除。
@@ -76,4 +80,5 @@ npm install && npm run dev  # 代理 /api 到 127.0.0.1:8080
 - **出口不可用要顺延而不是记失败**（`store.DeferRotate`）：代理故障属于"暂时做不了"，账号本身没问题。走 `BumpRotateFailure` 会累加 `rotate_fail_count` 触发指数退避，最终把一批健康账号判成失效。
 - **代理健康检查独立于业务请求**（`proxypool.RunHealthChecks`）：不能用取件成败判断代理，那会把授权码失效这类账号自身的问题误判成代理故障，触发无谓的 IP 转移。
 - **`PROXY_ALLOW_DIRECT_FALLBACK` 默认关闭**：直连会把服务器真实 IP 关联到这批账号，一次就可能作废之前所有的隔离努力。
+- **在线更新必须校验 SHA256**（`internal/updater`）：这条通路决定本机下一刻运行什么代码，是系统里权限最高的一处。校验值取自 release 里的 `checksums.txt`，缺它的发布直接拒绝，散列不匹配就整个放弃、不碰原二进制。替换的顺序是先把现役的改名再放新的——两个平台都不允许写入运行中的可执行文件，这是唯一都成立的顺序。`dev` 版不参与更新，否则会悄悄覆盖掉本地未提交的构建。
 - **展示字段不能用 `omitempty`**：`category_name`、`tags`、`leased_until` 零值时若消失，调用方拿到的对象形状就不稳定，前端按必填字段访问会在运行时炸而类型检查发现不了。

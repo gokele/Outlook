@@ -1,0 +1,90 @@
+# 持续集成。
+#
+# 关键点：后端测试跑的是 PostgreSQL，不是 SQLite。
+# 两者在并发与锁的语义上并不等价 —— FOR UPDATE SKIP LOCKED 在 SQLite 上
+# 根本不存在，调度器抢任务的竞争在它上面永远不会真正发生。
+# 只跑 SQLite 通过不算通过。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: 后端测试 (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: outlook
+          POSTGRES_PASSWORD: outlook
+          POSTGRES_DB: outlook_console
+        ports: ['5432:5432']
+        # 等库真正能连上再跑用例，否则第一条用例会撞上还没起来的服务
+        options: >-
+          --health-cmd "pg_isready -U outlook"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: 检查格式
+        working-directory: backend
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化："; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        working-directory: backend
+        run: go vet ./...
+
+      - name: 测试 (SQLite)
+        working-directory: backend
+        run: go test ./...
+
+      - name: 测试 (PostgreSQL)
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgres://outlook:outlook@localhost:5432/outlook_console?sslmode=disable
+        run: go test -count=1 ./...
+
+  frontend:
+    name: 前端检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 类型检查
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: 构建
+        working-directory: frontend
+        run: npm run build

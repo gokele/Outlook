@@ -9,6 +9,8 @@ Outlook 账号池的管理与取件系统。批量导入账号，按需在线取
 - **令牌自动续期。** 常驻调度器保证每个账号在 90 天内至少轮换一次，速率由积压自动推导，账号增长时无需改配置。
 - **三条通道。** Graph、IMAP、POP3 自动降级，覆盖范围变化会如实标注。
 - **防误杀。** 网络故障与限流绝不把账号标记为失效；应用被封时按 client_id 熔断，而不是逐个标记账号。
+- **单文件部署。** 前端嵌在二进制里，服务器上只需要一个可执行文件，不必再配 Nginx 托管静态资源。
+- **一键在线更新。** 从 GitHub Releases 拉新版，校验 SHA256 后原地替换并自动重启，页面上就能完成。
 
 ## 快速开始（本地）
 
@@ -59,21 +61,49 @@ curl -H "Authorization: Bearer okc_xxx" \
 
 ## 部署
 
-生产不使用容器。目标机器上只有三样东西：一个 Go 静态二进制由 systemd 托管，一个 Nginx，一个 PostgreSQL。
+生产不使用容器。**前端嵌在二进制里**，目标机器上只需要一个可执行文件加一个 PostgreSQL。
+
+正常发版走 GitHub Actions（见下），本地手工构建的步骤是：
 
 ```bash
-# 后端交叉编译成不依赖任何库的静态二进制。
-# pgx 与 modernc.org/sqlite 都是纯 Go，CGO_ENABLED=0 即可从任意平台编出 Linux 可执行文件。
-cd backend && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o api .
-
-# 前端产物为静态文件，交给 Nginx。
-# 要求：静态资源长期缓存，index.html 短缓存；任意深链回退到 index.html，否则客户端路由接管不了。
+# 1. 构建前端，产物拷进 backend/web/dist 供 go:embed 打包
 cd frontend && npm ci && npm run build
+rm -rf ../backend/web/dist && cp -R dist ../backend/web/dist
+
+# 2. 编译。版本号必须由 ldflags 注入，否则是 dev 版，在线更新对它不生效。
+#    pgx 与 modernc.org/sqlite 都是纯 Go，CGO_ENABLED=0 即可从任意平台交叉编译。
+cd ../backend
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags="-s -w -X main.version=v0.1.0" -o api .
 ```
 
-**部署脚本（systemd unit、Nginx 配置、发布脚本）尚未纳入版本库，待补。**
+把 `api` 拷到服务器、配好环境变量、跑起来即可。不需要 Nginx 托管静态资源；要 HTTPS 时前面挂一层反代即可。
+
+**systemd unit 与反代配置尚未纳入版本库，待补。**
 
 主密钥用 `openssl rand -hex 32` 生成，通过环境变量或 systemd 的 `EnvironmentFile` 注入，配置文件权限必须是 `0600`。**一旦启用不可更改**，改了之后已存的令牌全部无法解密。它不进备份，备份泄露不足以解出令牌。
+
+## 在线更新
+
+设置页有「在线更新」面板：显示当前版本、GitHub 上最新发布的说明，一键完成下载、校验、替换与重启。
+
+发布由 GitHub Actions 完成，推一个标签即可：
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` 会构建前端、嵌进二进制、交叉编译四个平台
+（linux/windows × amd64/arm64）、生成 `checksums.txt`，并按上一个标签以来的提交
+自动整理变更说明，发成一个 Release。
+
+**校验和不是可选项。** 更新决定本机下一刻运行什么代码，是系统里权限最高的通路；缺 `checksums.txt` 的发布会被直接拒绝，散列对不上则整个放弃、不碰原二进制。
+
+替换的顺序是「先把现役的改名为 `api.old`，再把新的放进它的位置」——两个平台都不允许写入正在运行的可执行文件，先挪后放是唯一都成立的顺序；中途失败会把旧的挪回来。
+
+重启在 Linux 上走 `execve` 原地换映像，进程号不变，**不依赖 systemd 之类的进程守护**；Windows 没有 `execve`，改为拉起新进程后自己退出，进程号会变。安装需要重新输入登录密码。
+
+用 `UPDATE_REPO` 改更新源，留空即关闭。`dev` 版不参与在线更新——本地构建的代码不在任何发布里，"更新"它等于悄悄丢掉未提交的改动。
 
 ## 注意事项
 

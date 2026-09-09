@@ -373,6 +373,19 @@ func (s *Store) SetCategoryProxyGroup(ctx context.Context, categoryID int64, gro
 	return nil
 }
 
+// UpdateUsername 更新后台账号的登录名。
+// username 有唯一约束，重名时返回可被 IsDuplicate 识别的错误。
+func (s *Store) UpdateUsername(ctx context.Context, id int64, name string) error {
+	res, err := s.exec(ctx, `UPDATE users SET username = ? WHERE id = ?`, name, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // UpdateUserPassword 更新后台账号的密码散列。
 func (s *Store) UpdateUserPassword(ctx context.Context, id int64, hash string) error {
 	_, err := s.exec(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, id)

@@ -1,6 +1,7 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   changePassword as changePasswordApi,
+  changeUsername as changeUsernameApi,
   login as loginApi,
   logout as logoutApi,
   fetchMe,
@@ -41,6 +42,23 @@ export function useLogout() {
     mutationFn: logoutApi,
     onSuccess: () => {
       queryClient.clear();
+    },
+  });
+}
+
+/**
+ * 修改当前账号的登录名。
+ *
+ * 成功后把新用户信息直接写回缓存, 顶栏的用户名立即跟着变 ——
+ * 不重新拉取是因为后端已经回带了完整的 user, 再请求一次没有新信息。
+ */
+export function useChangeUsername() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: changeUsernameApi,
+    onSuccess: (data: { user: AdminUser }) => {
+      queryClient.setQueryData(queryKeys.auth.me(), data);
+      toast.success(`登录名已改为 ${data.user.username}`);
     },
   });
 }

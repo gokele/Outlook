@@ -26,7 +26,16 @@ import (
 	"github.com/kele/outlook-console/internal/scheduler"
 	"github.com/kele/outlook-console/internal/store"
 	"github.com/kele/outlook-console/internal/tokensvc"
+	"github.com/kele/outlook-console/web"
 )
+
+// version 由构建时的 ldflags 注入：
+//
+//	go build -ldflags="-X main.version=v1.2.0"
+//
+// 保持 dev 的二进制不参与在线更新 —— 本地构建的代码不在任何发布里，
+// 把它"更新"成远端版本等于悄悄丢掉未提交的改动。
+var version = "dev"
 
 func main() {
 	var (
@@ -37,7 +46,7 @@ func main() {
 	flag.Parse()
 
 	if *showVer {
-		fmt.Println("outlook-console api")
+		fmt.Println("outlook-console api", version)
 		return
 	}
 
@@ -67,6 +76,7 @@ func run(log *slog.Logger, createUser string) error {
 	if err != nil {
 		return err
 	}
+	cfg.Version = version
 
 	st, err := store.Open(cfg.DatabaseURL)
 	if err != nil {
@@ -125,6 +135,16 @@ func run(log *slog.Logger, createUser string) error {
 
 	srv := httpapi.New(cfg, st, box, ts, orch, sched, log)
 	srv.SetPool(pool)
+	// 一键更新的重启动作。
+	//
+	// before 做优雅收尾：把在途的取件日志落盘，避免换映像时丢掉记录。
+	// exit 只在原地 execve 失败时才会用到 —— 那时退出进程，指望 systemd 拉起。
+	// 开发模式下不给 exit：go run 起来的进程没人守护，退出就是停服。
+	var exitFallback func()
+	if !cfg.Dev {
+		exitFallback = stop
+	}
+	srv.SetRestart(func() { orch.Close() }, exitFallback)
 
 	// 把库中已保存的运行参数应用到内存中的服务。
 	if saved, err := st.GetSettings(ctx); err == nil {
@@ -146,7 +166,8 @@ func run(log *slog.Logger, createUser string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("HTTP 服务已启动", "addr", cfg.Addr, "env", envName(cfg.Dev))
+		log.Info("HTTP 服务已启动", "addr", cfg.Addr, "env", envName(cfg.Dev),
+			"version", version, "web", web.Available())
 		if err := h.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

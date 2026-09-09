@@ -1,0 +1,132 @@
+# 发布。推一个 v 开头的标签即触发，产物直接进 GitHub Release，
+# 应用里的「在线更新」面板随后就能看到并一键装上。
+#
+# 资产命名必须带 <GOOS>-<GOARCH>：更新器就是靠这段字符串挑出适配当前
+# 机器的那一个（internal/updater 的 Latest）。名字对不上，用户会在
+# arm 机器上装到 amd64 的包，而错误要到下一次启动才暴露，离现场很远。
+#
+# checksums.txt 不是可选项：更新决定服务器下一刻运行什么代码，
+# 缺它的发布会被更新器直接拒绝。
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的标签，如 v0.1.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建与发布
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 取全部历史，下面要按上一个标签生成变更列表
+          fetch-depth: 0
+
+      - name: 解析版本号
+        id: ver
+        run: |
+          tag="${{ github.event.inputs.tag }}"
+          [ -z "$tag" ] && tag="${GITHUB_REF#refs/tags/}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "发布版本 $tag"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: 构建前端
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: 前端产物拷进 go:embed 目录
+        run: |
+          rm -rf backend/web/dist
+          cp -R frontend/dist backend/web/dist
+          # .gitkeep 要留着，仓库里靠它保证目录存在
+          touch backend/web/dist/.gitkeep
+          ls -la backend/web/dist
+
+      # 交叉编译。pgx 与 modernc.org/sqlite 都是纯 Go，
+      # CGO_ENABLED=0 就能从 ubuntu 直接编出各平台的静态二进制。
+      - name: 交叉编译
+        working-directory: backend
+        env:
+          CGO_ENABLED: '0'
+          VERSION: ${{ steps.ver.outputs.tag }}
+        run: |
+          mkdir -p ../release
+          build() {
+            goos=$1; goarch=$2; ext=$3
+            out="../release/api-${goos}-${goarch}${ext}"
+            echo "==> $out"
+            GOOS=$goos GOARCH=$goarch go build \
+              -trimpath \
+              -ldflags="-s -w -X main.version=${VERSION}" \
+              -o "$out" .
+          }
+          build linux   amd64 ''
+          build linux    arm64 ''
+          build windows amd64 '.exe'
+          build windows arm64 '.exe'
+
+      - name: 生成校验和
+        working-directory: release
+        run: |
+          # 必须在产物目录内执行：sha256sum 会把路径原样写进文件，
+          # 带上目录前缀就与 Release 里的资产名对不上了。
+          sha256sum api-* > checksums.txt
+          cat checksums.txt
+
+      - name: 整理变更说明
+        id: notes
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${{ steps.ver.outputs.tag }}^" 2>/dev/null || true)
+          {
+            if [ -n "$prev" ]; then
+              echo "### 自 $prev 以来的变更"
+              echo
+              git log --no-merges --pretty='- %s' "$prev..${{ steps.ver.outputs.tag }}"
+            else
+              echo "### 首个发布"
+            fi
+            echo
+            echo "### 下载"
+            echo
+            echo "单文件，前端已嵌在里面，不需要另配静态资源服务。"
+            echo
+            echo '| 平台 | 文件 |'
+            echo '|---|---|'
+            echo '| Linux x86_64 | `api-linux-amd64` |'
+            echo '| Linux ARM64 | `api-linux-arm64` |'
+            echo '| Windows x86_64 | `api-windows-amd64.exe` |'
+            echo '| Windows ARM64 | `api-windows-arm64.exe` |'
+            echo
+            echo "已在运行旧版本的，直接在设置页的「在线更新」里一键升级即可，无需手动下载。"
+          } > notes.md
+          cat notes.md
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body_path: notes.md
+          files: |
+            release/api-*
+            release/checksums.txt

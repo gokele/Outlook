@@ -68,6 +68,8 @@ export interface AdminUser {
   id: number | string;
   username: string;
   role: string;
+  /** 上次登录时间, 0 表示从未记录 */
+  last_login_at: number;
 }
 
 /** 分类, count 为该分类下账号数 */

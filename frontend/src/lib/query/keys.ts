@@ -47,6 +47,10 @@ export const queryKeys = {
     root: ['settings'] as const,
     detail: () => ['settings', 'detail'] as const,
   },
+  update: {
+    root: ['update'] as const,
+    status: () => ['update', 'status'] as const,
+  },
   logs: {
     root: ['logs'] as const,
     lists: () => ['logs', 'list'] as const,

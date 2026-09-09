@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,6 +73,89 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // handleMe 返回当前登录用户。
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, map[string]any{"user": userOf(r)})
+}
+
+type changeUsernameReq struct {
+	Username        string `json:"username"`
+	CurrentPassword string `json:"current_password"`
+}
+
+// 登录名的长度与字符集限制。
+//
+// 只收字母、数字与 . _ -：登录名要靠人一字不差地敲进登录框，
+// 允许空格与全角字符只会制造"看起来对但登不进去"的死局。
+const (
+	minUsernameLen = 3
+	maxUsernameLen = 32
+)
+
+var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// handleChangeUsername 修改当前登录账号的登录名。
+//
+// 同样必须验证当前密码。改登录名比改密码更容易造成不可逆的后果：
+// 拿到会话的人把名字一改，真正的机主连登录框都过不去，而这个系统
+// 没有找回流程，只能上服务器执行 api -create-user 重建账号。
+func (s *Server) handleChangeUsername(w http.ResponseWriter, r *http.Request) {
+	u := userOf(r)
+	if u == nil {
+		writeError(w, r, newAPIError(401, "UNAUTHORIZED", "未登录"), s.log)
+		return
+	}
+	var req changeUsernameReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, r, err, s.log)
+		return
+	}
+
+	// 重新读库而不是用会话里的快照，确保比对的是当前散列。
+	cur, err := s.st.GetUser(r.Context(), u.ID)
+	if err != nil {
+		writeError(w, r, newAPIError(401, "UNAUTHORIZED", "账号不存在"), s.log)
+		return
+	}
+	if !crypto.VerifyPassword(cur.PasswordHash, req.CurrentPassword) {
+		writeError(w, r, newAPIError(400, "WRONG_PASSWORD", "当前密码不正确"), s.log)
+		return
+	}
+
+	name := strings.TrimSpace(req.Username)
+	if name == cur.Username {
+		writeError(w, r, newAPIError(400, "SAME_USERNAME", "新登录名与当前的相同"), s.log)
+		return
+	}
+	if n := len([]rune(name)); n < minUsernameLen || n > maxUsernameLen {
+		writeError(w, r, newAPIError(400, "BAD_USERNAME",
+			fmt.Sprintf("登录名需要 %d 到 %d 个字符", minUsernameLen, maxUsernameLen)), s.log)
+		return
+	}
+	if !usernamePattern.MatchString(name) {
+		writeError(w, r, newAPIError(400, "BAD_USERNAME",
+			"登录名只能包含字母、数字与 . _ -"), s.log)
+		return
+	}
+	// 登录是大小写敏感的精确匹配。只改大小写会得到一个自己都可能记混的名字，
+	// 而它与原名在登录框里是两个不同的账号，因此一并挡掉。
+	if strings.EqualFold(name, cur.Username) {
+		writeError(w, r, newAPIError(400, "SAME_USERNAME",
+			"登录名区分大小写，只改大小写会得到一个容易记混的名字"), s.log)
+		return
+	}
+
+	if err := s.st.UpdateUsername(r.Context(), u.ID, name); err != nil {
+		if store.IsDuplicate(err) {
+			writeError(w, r, newAPIError(409, "USERNAME_EXISTS", "该登录名已被占用"), s.log)
+			return
+		}
+		writeError(w, r, err, s.log)
+		return
+	}
+
+	// 会话按 user_id 关联，改名不影响任何一处登录状态，因此不撤销会话：
+	// 凭据没有泄露，把自己的其他设备踢下线只是平添麻烦。
+	cur.Username = name
+	s.log.Info("后台账号已改名", "id", cur.ID, "from", u.Username, "to", name)
+	writeJSON(w, r, map[string]any{"user": cur})
 }
 
 type changePasswordReq struct {
