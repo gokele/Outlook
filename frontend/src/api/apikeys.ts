@@ -9,6 +9,8 @@ export interface CreateApiKeyPayload {
   ip_allowlist: string[];
   allow_export_secrets: boolean;
   allow_lease: boolean;
+  /** 为假时该密钥取不到邮件正文, 也读不了原始 MIME */
+  allow_body: boolean;
 }
 
 /** 创建与重置的返回值, key 为明文, 仅此一次可见 */

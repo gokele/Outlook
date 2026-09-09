@@ -18,8 +18,21 @@ export interface AccountListParams {
   status?: AccountStatus;
   channel?: Channel;
   tag?: string;
+  /** 按邮箱后缀筛选, 如 outlook.com */
+  domain?: string;
   page: number;
   size: number;
+}
+
+/** 账号池里出现过的邮箱域名及各自数量 */
+export interface DomainCount {
+  domain: string;
+  count: number;
+}
+
+/** 列出账号池里的邮箱域名, 供筛选下拉使用 */
+export function fetchAccountDomains() {
+  return request<{ items: DomainCount[] }>('/admin/accounts/domains');
 }
 
 export interface AccountPatch {
@@ -28,6 +41,13 @@ export interface AccountPatch {
   channel_policy?: ChannelPolicy;
   disabled?: boolean;
   tags?: string[];
+  /**
+   * 更换授权码。给了它就会整组覆盖凭据并把账号重置为未验证 ——
+   * 旧的通道能力、失败计数、90 天倒计时都是针对上一把授权码的。
+   */
+  refresh_token?: string;
+  /** 更换 client_id。必须与 refresh_token 同时给, 授权码是绑定它签发的 */
+  client_id?: string;
 }
 
 /** 批量更新入参, ids 为必填的目标账号集合 */

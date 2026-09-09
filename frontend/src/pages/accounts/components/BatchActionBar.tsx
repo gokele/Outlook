@@ -18,6 +18,8 @@ interface BatchActionBarProps {
   onMoveCategory: () => void;
   onAddTags: () => void;
   onVerify: () => void;
+  /** 按当前筛选条件起任务, 不需要先勾选 */
+  onVerifyFiltered: () => void;
   onExport: () => void;
   onDelete: () => void;
 }
@@ -35,6 +37,7 @@ export function BatchActionBar({
   onMoveCategory,
   onAddTags,
   onVerify,
+  onVerifyFiltered,
   onExport,
   onDelete,
 }: BatchActionBarProps) {
@@ -86,6 +89,15 @@ export function BatchActionBar({
               onClick={onVerify}
             >
               {asJob ? `后台验证 (${verifiable})` : `批量验证${bannedCount > 0 ? ` (${verifiable})` : ''}`}
+            </Button>
+          </Tooltip>
+          {/*
+            一键动作：不勾选也能干活。"验证全部未验证账号"这类操作，
+            逐页勾选几千行既不现实也没意义 —— 筛选条件已经把范围说清楚了。
+          */}
+          <Tooltip title="按当前筛选条件批量验证, 不需要先勾选。会转为后台任务">
+            <Button size="small" icon={<ThunderboltOutlined />} onClick={onVerifyFiltered}>
+              验证筛选结果
             </Button>
           </Tooltip>
           <Button size="small" icon={<DownloadOutlined />} onClick={onExport}>

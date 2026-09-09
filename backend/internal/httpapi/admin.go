@@ -267,6 +267,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	weekAgo := time.Now().AddDate(0, 0, -7).Unix()
 	fetch7d, _ := s.st.FetchStatsSince(ctx, weekAgo)
 	tiers, _ := s.st.TokenTierCounts(ctx, weekAgo)
+	// 验证码提取成败。取件成功不等于拿到了码 —— 正则写错或对方改了邮件模板时，
+	// 每条日志都显示成功，而调用方一直拿不到码，这一项是唯一能看出来的地方。
+	codeStats, _ := s.st.CodeStatsSince(ctx, weekAgo)
 	health, _ := s.sched.CheckHealth(ctx)
 	clients, _ := s.st.ListClientApps(ctx)
 
@@ -283,6 +286,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"by_status":         byStatus,
 		"by_category":       cats,
 		"fetch_7d":          fetch7d,
+		"code_7d":           codeStats,
 		"token_tiers":       tiers,
 		"scheduler":         health,
 		"clients":           clients,
@@ -300,6 +304,7 @@ func parseAccountFilter(r *http.Request) store.AccountFilter {
 		Status:  q.Get("status"),
 		Channel: q.Get("channel"),
 		Tag:     q.Get("tag"),
+		Domain:  strings.TrimSpace(q.Get("domain")),
 	}
 	if v := q.Get("category_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
@@ -315,6 +320,16 @@ func parseAccountFilter(r *http.Request) store.AccountFilter {
 }
 
 // handleListAccounts 分页列出账号。列表不含任何邮件内容。
+// handleListDomains 列出账号池里出现过的邮箱域名及各自数量，供筛选下拉使用。
+func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
+	items, err := s.st.ListAccountDomains(r.Context())
+	if err != nil {
+		writeError(w, r, err, s.log)
+		return
+	}
+	writeJSON(w, r, map[string]any{"items": items})
+}
+
 func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 	items, total, err := s.st.ListAccounts(r.Context(), parseAccountFilter(r))
 	if err != nil {
@@ -354,6 +369,14 @@ type patchAccountReq struct {
 	ChannelPolicy *string    `json:"channel_policy"`
 	Disabled      *bool      `json:"disabled"`
 	Tags          *[]string  `json:"tags"`
+
+	// 以下三项是凭据。给了 RefreshToken 就会整组覆盖并把账号重置为未验证。
+	//
+	// 换授权码是最常见的运维动作 —— 原来只能拼一行导入文本走一遍导入流程，
+	// 为了改一个账号绕一大圈。
+	ClientID     *string `json:"client_id"`
+	RefreshToken *string `json:"refresh_token"`
+	Tenant       *string `json:"tenant"`
 }
 
 // handlePatchAccount 修改账号的可编辑字段。
@@ -376,6 +399,46 @@ func (s *Server) handlePatchAccount(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 凭据整组覆盖。给了新授权码就必须连带重置状态与探测结果 ——
+	// 旧的通道能力、失败计数、90 天倒计时全都是针对上一把授权码的，
+	// 留着它们会让新授权码一上来就背着旧账号的历史。
+	if req.RefreshToken != nil {
+		token := strings.TrimSpace(*req.RefreshToken)
+		if token == "" {
+			writeError(w, r, newAPIError(400, "BAD_REQUEST", "授权码不能为空"), s.log)
+			return
+		}
+		acc, gerr := s.st.GetAccount(r.Context(), id)
+		if gerr != nil {
+			writeError(w, r, mapStoreError(gerr), s.log)
+			return
+		}
+		clientID := acc.ClientID
+		if req.ClientID != nil && strings.TrimSpace(*req.ClientID) != "" {
+			clientID = strings.TrimSpace(*req.ClientID)
+		}
+		tenant := acc.Tenant
+		if req.Tenant != nil && strings.TrimSpace(*req.Tenant) != "" {
+			tenant = strings.TrimSpace(*req.Tenant)
+		}
+		enc, eerr := s.box.Encrypt(token)
+		if eerr != nil {
+			writeError(w, r, eerr, s.log)
+			return
+		}
+		if uerr := s.st.UpdateAccountCredentials(r.Context(), id, clientID, enc, tenant); uerr != nil {
+			writeError(w, r, uerr, s.log)
+			return
+		}
+		s.log.Info("账号凭据已更新", "account", acc.Email, "client_id", clientID)
+	} else if req.ClientID != nil && strings.TrimSpace(*req.ClientID) != "" {
+		// 只改 client_id 不换授权码：同一把授权码换个应用注册是不成立的，
+		// 授权码是绑定到 client_id 签发的。挡下来比让它到取件时才失败要好。
+		writeError(w, r, newAPIError(400, "BAD_REQUEST",
+			"更换 client_id 必须同时提供新的授权码 —— 授权码是绑定 client_id 签发的，换了应用注册原授权码即失效"), s.log)
+		return
+	}
+
 	if err := s.st.UpdateAccount(r.Context(), id, store.AccountPatch{
 		CategoryID: req.CategoryID.Value, ClearCategory: req.ClearCategory,
 		Note: req.Note, ChannelPolicy: req.ChannelPolicy, Disabled: req.Disabled,

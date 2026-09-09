@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/kele/outlook-console/internal/fetcher"
 	"github.com/kele/outlook-console/internal/model"
 	"github.com/kele/outlook-console/internal/orchestrator"
 	"github.com/kele/outlook-console/internal/store"
@@ -160,7 +161,7 @@ func (s *Server) handleMailLatest(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, r, http.StatusNoContent, "NO_MESSAGE", "过滤条件内没有邮件", nil)
 		return
 	}
-	writeJSON(w, r, s.mailPayload(acc, res, leaseInfo))
+	writeJSON(w, r, s.mailPayloadFor(apiKeyOf(r), acc, res, leaseInfo))
 }
 
 // handleMailList 取回最近若干封。
@@ -181,7 +182,7 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, r, http.StatusNoContent, "NO_MESSAGE", "过滤条件内没有邮件", nil)
 		return
 	}
-	writeJSON(w, r, s.mailPayload(acc, res, nil))
+	writeJSON(w, r, s.mailPayloadFor(apiKeyOf(r), acc, res, nil))
 }
 
 // handleMailClaim 按分类领取一个未被占用的账号并加上租约。
@@ -254,7 +255,7 @@ func (s *Server) handleMailClaim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, mapFetchError(ferr), s.log)
 		return
 	}
-	payload := s.mailPayload(acc, res, lease)
+	payload := s.mailPayloadFor(key, acc, res, lease)
 	if res == nil || res.Latest == nil {
 		payload["message"] = nil
 		writeJSON(w, r, payload)
@@ -281,6 +282,12 @@ func (s *Server) handleReleaseLease(w http.ResponseWriter, r *http.Request) {
 // mailPayload 组装取件响应。folder_coverage 如实反映本次真实覆盖的文件夹：
 // 降级到 POP3 时看不到垃圾邮件，调用方据此判断结果是否可信。
 func (s *Server) mailPayload(acc *model.Account, res *orchestrator.Response, lease *model.Lease) map[string]any {
+	return s.mailPayloadFor(nil, acc, res, lease)
+}
+
+// mailPayloadFor 组装响应，并按调用方的权限决定要不要给正文。
+func (s *Server) mailPayloadFor(key *model.APIKey, acc *model.Account,
+	res *orchestrator.Response, lease *model.Lease) map[string]any {
 	out := map[string]any{
 		"account": map[string]any{
 			"id":                 acc.ID,
@@ -301,9 +308,23 @@ func (s *Server) mailPayload(acc *model.Account, res *orchestrator.Response, lea
 	out["folder_coverage"] = res.FolderCoverage
 	out["token_tier"] = res.TokenTier
 	out["fetched_at"] = res.FetchedAt
-	out["messages"] = res.Messages
-	if res.Latest != nil {
-		out["message"] = res.Latest
+
+	// 该 Key 不允许读正文时，把正文剥掉再返回。
+	//
+	// 剥在这一层而不是让调用方自觉不看：接口给出去之后就不由我们控制了。
+	// 主题、发件人、时间保留 —— 没有它们，验证码来自哪封邮件都判断不了。
+	if key != nil && !key.AllowBody {
+		out["messages"] = stripBodies(res.Messages)
+		if res.Latest != nil {
+			m := stripBody(*res.Latest)
+			out["message"] = &m
+		}
+		out["body_omitted"] = true
+	} else {
+		out["messages"] = res.Messages
+		if res.Latest != nil {
+			out["message"] = res.Latest
+		}
 	}
 	if res.Code != "" {
 		out["code"] = res.Code
@@ -328,7 +349,7 @@ func (s *Server) handleAdminMail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, mapFetchError(ferr), s.log)
 		return
 	}
-	writeJSON(w, r, s.mailPayload(acc, res, nil))
+	writeJSON(w, r, s.mailPayloadFor(apiKeyOf(r), acc, res, nil))
 }
 
 // handleAdminMailRaw 与 handleMailRaw 共用实现，在线取回单封原始 MIME。
@@ -344,6 +365,13 @@ func (s *Server) handleMailRaw(w http.ResponseWriter, r *http.Request) {
 
 // serveRaw 实现原始邮件下载。
 func (s *Server) serveRaw(w http.ResponseWriter, r *http.Request) {
+	// 原始 MIME 就是整封邮件本身。禁读正文的 Key 更不该拿到它 ——
+	// 否则剥正文那一层等于白做。
+	if key := apiKeyOf(r); key != nil && !key.AllowBody {
+		writeError(w, r, newAPIError(403, "BODY_DENIED",
+			"该 Key 未开启读取邮件正文的权限"), s.log)
+		return
+	}
 	acc, err := s.resolveAccount(r)
 	if err != nil {
 		writeError(w, r, err, s.log)
@@ -517,4 +545,24 @@ func (s *Server) handleCompleteLease(w http.ResponseWriter, r *http.Request) {
 		out["project_used"] = used
 	}
 	writeJSON(w, r, out)
+}
+
+// stripBody 去掉一封邮件的正文与摘要。
+//
+// 摘要也要去：它取自正文开头，验证码往往就在那几十个字里 ——
+// 只去正文留摘要等于没去。
+func stripBody(m fetcher.Message) fetcher.Message {
+	m.BodyText = ""
+	m.BodyHTML = ""
+	m.Snippet = ""
+	return m
+}
+
+// stripBodies 批量去正文。
+func stripBodies(in []fetcher.Message) []fetcher.Message {
+	out := make([]fetcher.Message, len(in))
+	for i, m := range in {
+		out[i] = stripBody(m)
+	}
+	return out
 }

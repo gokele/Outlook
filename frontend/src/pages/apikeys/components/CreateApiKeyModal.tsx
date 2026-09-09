@@ -18,6 +18,7 @@ interface FormValues {
   ip_allowlist: string;
   allow_export_secrets: boolean;
   allow_lease: boolean;
+  allow_body: boolean;
 }
 
 /** 创建密钥弹窗: 授权范围、限速、IP 白名单与两个高危开关 */
@@ -45,6 +46,7 @@ export function CreateApiKeyModal({
       ip_allowlist: splitList(values.ip_allowlist ?? ''),
       allow_export_secrets: values.allow_export_secrets,
       allow_lease: values.allow_lease,
+      allow_body: values.allow_body,
     });
   };
 
@@ -68,6 +70,8 @@ export function CreateApiKeyModal({
           scope_category_ids: [],
           allow_export_secrets: false,
           allow_lease: false,
+          // 默认允许读正文, 与既有密钥的行为一致。
+          allow_body: true,
         }}
       >
         <Form.Item
@@ -101,6 +105,15 @@ export function CreateApiKeyModal({
 
         <Form.Item name="ip_allowlist" label="IP 白名单" extra="每行或逗号分隔一个 IP/CIDR, 留空表示不限制">
           <Input.TextArea rows={3} placeholder={'203.0.113.10\n198.51.100.0/24'} />
+        </Form.Item>
+
+        <Form.Item
+          name="allow_body"
+          label="允许读取邮件正文"
+          valuePropName="checked"
+          extra="关闭后该密钥只拿得到主题、发件人与验证码, 拿不到正文, 也读不了原始邮件。把接码接口给第三方时建议关闭"
+        >
+          <Switch />
         </Form.Item>
 
         <Form.Item

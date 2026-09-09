@@ -46,6 +46,8 @@ export interface AccountsSearch {
   status?: AccountStatus;
   channel?: Channel;
   tag?: string;
+  /** 按邮箱后缀筛选, 如 outlook.com */
+  domain?: string;
   page: number;
   size: number;
 }
@@ -65,6 +67,7 @@ export function validateAccountsSearch(input: AccountsSearchInput & SearchSchema
     status: toEnum(search.status, STATUS_VALUES),
     channel: toEnum(search.channel, CHANNEL_VALUES),
     tag: toStr(search.tag),
+    domain: toStr(search.domain),
     page: toInt(search.page, 1),
     size: toInt(search.size, DEFAULT_PAGE_SIZE),
   };

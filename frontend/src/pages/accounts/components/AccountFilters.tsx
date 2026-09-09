@@ -1,5 +1,9 @@
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { useQuery } from '@tanstack/react-query';
 import { Button, Card, Col, Input, Row, Select, Space } from 'antd';
+import { fetchAccountDomains } from '@/api/accounts';
+import { queryKeys } from '@/lib/query/keys';
+import { STALE_TIME } from '@/lib/query/client';
 import { useState } from 'react';
 import { ACCOUNT_STATUS_OPTIONS, CHANNEL_OPTIONS } from '@/constants/account';
 import { useCategoryOptions } from '@/hooks/useCategories';
@@ -30,6 +34,18 @@ export function AccountFilters({
   const [syncedQuery, setSyncedQuery] = useState(search.q);
   const { plainOptions: categoryOptions } = useCategoryOptions();
   const { options: tagOptions } = useTags();
+
+  // 域名列表随账号池变化, 但变得很慢 —— 只有导入新域名的账号时才会多一项。
+  // 因此当参考数据缓存, 不跟着列表一起刷。
+  const { data: domains } = useQuery({
+    queryKey: queryKeys.accounts.domains(),
+    queryFn: fetchAccountDomains,
+    staleTime: STALE_TIME.reference,
+  });
+  const domainOptions = (domains?.items ?? []).map((d) => ({
+    label: `${d.domain} (${d.count})`,
+    value: d.domain,
+  }));
 
   // URL 上的关键字被外部改动 (重置、点击标签、深链跳转) 时同步回输入框。
   // 采用 React 官方推荐的"渲染期调整 state"写法, 避免额外的 effect 与级联渲染。
@@ -94,6 +110,22 @@ export function AccountFilters({
             options={tagOptions}
             optionFilterProp="label"
             onChange={(value?: string) => onChange({ tag: value, page: 1 })}
+          />
+        </Col>
+        <Col xs={12} md={6} lg={4} xl={3}>
+          {/*
+            域名选项带上各自的账号数：不同域名的风控表现并不一样，
+            知道"hotmail 有 3 万个"比只看到一个域名列表有用得多。
+          */}
+          <Select
+            allowClear
+            showSearch
+            style={{ width: '100%' }}
+            placeholder="域名"
+            value={search.domain}
+            options={domainOptions}
+            optionFilterProp="label"
+            onChange={(value?: string) => onChange({ domain: value, page: 1 })}
           />
         </Col>
         <Col xs={24} lg={24} xl={6}>

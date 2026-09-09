@@ -401,6 +401,9 @@ type apiKeyReq struct {
 	IPAllowlist        []string `json:"ip_allowlist"`
 	AllowExportSecrets bool     `json:"allow_export_secrets"`
 	AllowLease         bool     `json:"allow_lease"`
+	// AllowBody 为假时该 Key 取不到邮件正文，也读不了原始 MIME。
+	// 用于把接码接口给第三方：对方只需要验证码，不需要看到整封邮件。
+	AllowBody *bool `json:"allow_body"`
 }
 
 // handleCreateAPIKey 创建 Key。明文只在这里返回一次，库中只存哈希。
@@ -433,6 +436,8 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		ScopeCategoryIDs: req.ScopeCategoryIDs, RateLimitQPS: req.RateLimitQPS,
 		IPAllowlist: req.IPAllowlist, AllowExportSecrets: req.AllowExportSecrets,
 		AllowLease: req.AllowLease,
+		// 不传时默认允许 —— 与既有 Key 的行为一致，避免升级后悄悄收紧。
+		AllowBody: req.AllowBody == nil || *req.AllowBody,
 	})
 	if err != nil {
 		writeError(w, r, err, s.log)

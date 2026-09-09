@@ -161,6 +161,32 @@ export default function AccountsPage() {
    * 硬走同步只会在写到一半时被掐断。这个切换不需要用户操心，
    * 他要的只是"把这些验一遍"。
    */
+  /**
+   * 按当前筛选条件起一个批量验证任务，不需要先勾选。
+   *
+   * "验证全部未验证账号"这类动作，逐页勾选几千行既不现实也没意义 ——
+   * 筛选条件本身就已经把范围说清楚了。
+   */
+  const handleVerifyFiltered = async () => {
+    const ok = await modal.confirm({
+      title: '按当前筛选条件批量验证',
+      target: `约 ${total.toLocaleString()} 个账号`,
+      description: '会转为后台任务，进度可查、可随时取消。封禁账号会自动跳过。',
+      consequences: ['每个账号都会向微软发起一次令牌请求'],
+      confirmText: '开始',
+    });
+    if (!ok) return;
+    try {
+      const { page: _p, size: _s, ...filter } = params;
+      const job = await startVerifyJob({ filter });
+      setDismissedJob(null);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.jobs.root });
+      toast.success(`已启动后台任务，共 ${job.total} 个账号`);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : '无法启动任务');
+    }
+  };
+
   const handleBatchVerify = async () => {
     if (selectedKeys.length <= BATCH_VERIFY_MAX) {
       mutations.batchVerify.mutate({ ids: selectedKeys });
@@ -290,6 +316,7 @@ export default function AccountsPage() {
         onMoveCategory={() => void handleBatchUpdate('category')}
         onAddTags={() => void handleBatchUpdate('tags')}
         onVerify={() => void handleBatchVerify()}
+        onVerifyFiltered={() => void handleVerifyFiltered()}
         onExport={() => setExportOpen(true)}
         onDelete={() => void handleBatchDelete()}
       />

@@ -80,9 +80,12 @@ type AccountFilter struct {
 	Status     string
 	Channel    string
 	Tag        string
-	IDs        []int64
-	Page       int
-	Size       int
+	// Domain 按邮箱后缀筛选，如 outlook.com。账号池上规模后常需要按域名分开看，
+	// 不同域名的风控表现并不一样。
+	Domain string
+	IDs    []int64
+	Page   int
+	Size   int
 }
 
 // where 依据过滤条件拼出条件子句与参数。
@@ -114,6 +117,12 @@ func (f AccountFilter) where() (string, []any) {
 	if f.Tag != "" {
 		cond = append(cond, "EXISTS (SELECT 1 FROM account_tags at JOIN tags t ON t.id = at.tag_id WHERE at.account_id = a.id AND t.name = ?)")
 		args = append(args, f.Tag)
+	}
+	if d := strings.ToLower(strings.TrimSpace(f.Domain)); d != "" {
+		// 用 LIKE '%@domain' 而不是在 SQL 里切字符串：两种数据库的字符串函数不同，
+		// 而且切出来的表达式用不上索引，LIKE 的前缀通配同样用不上但至少写法统一。
+		cond = append(cond, "a.email LIKE ?")
+		args = append(args, "%@"+d)
 	}
 	if len(f.IDs) > 0 {
 		cond = append(cond, "a.id IN ("+placeholders(len(f.IDs))+")")

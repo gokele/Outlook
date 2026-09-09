@@ -17,10 +17,10 @@ func (s *Store) InsertFetchLog(ctx context.Context, l *model.FetchLog) error {
 	}
 	_, err := s.exec(ctx,
 		`INSERT INTO fetch_logs (account_id, trigger_src, channel, folder_coverage, token_tier,
-		   api_key_id, duration_ms, msg_count, result, error_code, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		   api_key_id, duration_ms, msg_count, result, error_code, created_at, code_result)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		l.AccountID, l.Trigger, l.Channel, l.FolderCoverage, l.TokenTier,
-		l.APIKeyID, l.DurationMS, l.MsgCount, l.Result, l.ErrorCode, l.CreatedAt)
+		l.APIKeyID, l.DurationMS, l.MsgCount, l.Result, l.ErrorCode, l.CreatedAt, l.CodeResult)
 	return err
 }
 
@@ -69,7 +69,8 @@ func (s *Store) ListFetchLogs(ctx context.Context, f LogFilter) ([]model.FetchLo
 		f.Page = 1
 	}
 	q := `SELECT l.id, l.account_id, COALESCE(a.email,''), l.trigger_src, l.channel, l.folder_coverage,
-	        l.token_tier, l.api_key_id, l.duration_ms, l.msg_count, l.result, l.error_code, l.created_at
+	        l.token_tier, l.api_key_id, l.duration_ms, l.msg_count, l.result, l.error_code,
+	        l.created_at, l.code_result
 	      FROM fetch_logs l LEFT JOIN accounts a ON a.id = l.account_id` + w +
 		` ORDER BY l.id DESC LIMIT ? OFFSET ?`
 	args = append(args, f.Size, (f.Page-1)*f.Size)
@@ -85,7 +86,7 @@ func (s *Store) ListFetchLogs(ctx context.Context, f LogFilter) ([]model.FetchLo
 		var keyID sql.NullInt64
 		if err := rows.Scan(&l.ID, &l.AccountID, &l.AccountEmail, &l.Trigger, &l.Channel,
 			&l.FolderCoverage, &l.TokenTier, &keyID, &l.DurationMS, &l.MsgCount,
-			&l.Result, &l.ErrorCode, &l.CreatedAt); err != nil {
+			&l.Result, &l.ErrorCode, &l.CreatedAt, &l.CodeResult); err != nil {
 			return nil, 0, err
 		}
 		if keyID.Valid {
@@ -133,6 +134,41 @@ func (s *Store) FetchStatsSince(ctx context.Context, since int64) (FetchStats, e
 			st.OK = n
 		} else {
 			st.Fail += n
+		}
+	}
+	return st, rows.Err()
+}
+
+// CodeStats 是验证码提取的成败统计。
+type CodeStats struct {
+	Hit  int `json:"hit"`
+	Miss int `json:"miss"`
+}
+
+// CodeStatsSince 统计指定时间之后的验证码提取成败。
+//
+// 只统计确实要求了提取的那些请求（code_result 非空）。没要求提取的取件
+// 不该拉低成功率 —— 它本来就不打算提码。
+func (s *Store) CodeStatsSince(ctx context.Context, since int64) (CodeStats, error) {
+	var st CodeStats
+	rows, err := s.query(ctx,
+		`SELECT code_result, COUNT(*) FROM fetch_logs
+		 WHERE created_at >= ? AND code_result <> '' GROUP BY code_result`, since)
+	if err != nil {
+		return st, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k string
+		var n int
+		if err := rows.Scan(&k, &n); err != nil {
+			return st, err
+		}
+		switch k {
+		case "hit":
+			st.Hit = n
+		case "miss":
+			st.Miss = n
 		}
 	}
 	return st, rows.Err()

@@ -88,6 +88,13 @@ type Response struct {
 	FolderCoverage []model.Folder    `json:"folder_coverage"`
 	TokenTier      model.TokenTier   `json:"token_tier"`
 	FetchedAt      int64             `json:"fetched_at"`
+
+	// pendingLog 是这次拉取还没写出去的日志。
+	//
+	// 成功路径的日志要等到 postProcess 之后才写：验证码是按请求提取的，
+	// 而拉取会被并发合并 —— 日志写在拉取那一层就拿不到提取结果。
+	// 推迟到外层边界，日志里才能带上"这次到底提没提到码"。
+	pendingLog *model.FetchLog
 }
 
 // Orchestrator 是编排器。
@@ -450,9 +457,9 @@ func (o *Orchestrator) doFetch(ctx context.Context, req Request, cfg Config) (*R
 
 		_ = o.st.TouchFetch(ctx, acc.ID)
 		_ = o.st.SetLastError(ctx, acc.ID, "")
-		o.logFetch(ctx, req, chName, coverage, tier, start, len(msgs), nil)
 
 		return &Response{
+			pendingLog:     o.buildLog(req, chName, coverage, tier, start, len(msgs), nil),
 			Messages:       dedup(msgs),
 			ChannelUsed:    chName,
 			FolderCoverage: coverage,
@@ -510,21 +517,49 @@ func (o *Orchestrator) postProcess(res *Response, req Request) *Response {
 	}
 	sort.SliceStable(msgs, func(i, j int) bool { return msgs[i].ReceivedAt > msgs[j].ReceivedAt })
 	out.Messages = msgs
+
+	// codeResult 空表示本次没要求提取。要求了却一封邮件都没有，同样算 miss ——
+	// 对调用方来说"没收到邮件"和"收到了但提不出码"都是拿不到验证码。
+	codeResult := ""
+	if req.CodeRegex != "" {
+		codeResult = "miss"
+	}
 	if len(msgs) > 0 {
 		latest := msgs[0]
 		out.Latest = &latest
 		if req.CodeRegex != "" {
 			out.Code = ExtractCode(latest, req.CodeRegex)
+			// 记下这次到底提没提到码。"拉回 3 封"和"拿到了验证码"是两回事：
+			// 正则写错或对方改了邮件模板时，每条日志都显示成功，
+			// 而调用方一直拿不到码 —— 不记这一项就看不出来。
+			if out.Code != "" {
+				codeResult = "hit"
+			}
 		}
 	}
+
+	// 日志推迟到这里才写：验证码是按请求提取的，写在拉取那一层就拿不到结果。
+	// 合并或复用的请求没有 pendingLog（那次拉取的日志已经写过了），
+	// 因此不会重复记账。
+	if res.pendingLog != nil {
+		res.pendingLog.CodeResult = codeResult
+		o.enqueueLog(res.pendingLog)
+		res.pendingLog = nil
+	}
+	out.pendingLog = nil
 	return &out
 }
 
-// logFetch 写取件日志。只记条数与结果，不记主题、发件人与正文。
-// logFetch 把一条取件日志投进异步队列。ctx 只用于保持调用点整齐，
-// 实际落盘在 logWorker 里用独立 context 完成。
+// logFetch 立即把一条取件日志投进异步队列。失败路径用它 ——
+// 失败没有提取结果可等，早写早了事。
 func (o *Orchestrator) logFetch(_ context.Context, req Request, ch model.Channel,
 	coverage []model.Folder, tier model.TokenTier, start time.Time, n int, err error) {
+	o.enqueueLog(o.buildLog(req, ch, coverage, tier, start, n, err))
+}
+
+// buildLog 组装一条取件日志但不写出。只记条数与结果，不记主题、发件人与正文。
+func (o *Orchestrator) buildLog(req Request, ch model.Channel,
+	coverage []model.Folder, tier model.TokenTier, start time.Time, n int, err error) *model.FetchLog {
 	lg := &model.FetchLog{
 		AccountID:  req.Account.ID,
 		Trigger:    req.Trigger,
@@ -548,7 +583,14 @@ func (o *Orchestrator) logFetch(_ context.Context, req Request, ch model.Channel
 			lg.ErrorCode = lg.ErrorCode[:200]
 		}
 	}
-	// 投递到异步队列。写满时丢弃，绝不阻塞取件的响应路径。
+	return lg
+}
+
+// enqueueLog 投递到异步队列。写满时丢弃，绝不阻塞取件的响应路径。
+func (o *Orchestrator) enqueueLog(lg *model.FetchLog) {
+	if lg == nil {
+		return
+	}
 	select {
 	case o.logCh <- lg:
 	default:

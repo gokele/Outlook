@@ -252,9 +252,14 @@ type APIKey struct {
 	IPAllowlist        []string `json:"ip_allowlist"`
 	AllowExportSecrets bool     `json:"allow_export_secrets"`
 	AllowLease         bool     `json:"allow_lease"`
-	LastUsedAt         int64    `json:"last_used_at"`
-	RevokedAt          int64    `json:"revoked_at"`
-	CreatedAt          int64    `json:"created_at"`
+	// AllowBody 为假时，该 Key 取到的邮件不含正文，也不能读原始 MIME。
+	//
+	// 用于"把接码接口给第三方"的场景：对方只需要验证码，不需要看到整封邮件。
+	// 默认为真 —— 升级不该悄悄改变既有 Key 的权限。
+	AllowBody  bool  `json:"allow_body"`
+	LastUsedAt int64 `json:"last_used_at"`
+	RevokedAt  int64 `json:"revoked_at"`
+	CreatedAt  int64 `json:"created_at"`
 }
 
 // TokenTier 记录一次取件走了三档取令牌中的哪一档。
@@ -282,9 +287,15 @@ type FetchLog struct {
 	APIKeyID       *int64 `json:"api_key_id"`
 	DurationMS     int64  `json:"duration_ms"`
 	MsgCount       int    `json:"msg_count"`
-	Result         string `json:"result"` // ok / error
-	ErrorCode      string `json:"error_code"`
-	CreatedAt      int64  `json:"created_at"`
+	// CodeResult 记录这次有没有提取到验证码。
+	//
+	// 空 = 本次没要求提取；hit = 提取到了；miss = 要求了但没提到。
+	// 单记 MsgCount 是不够的："成功，拉回 3 封"和"拿到了验证码"是两回事 ——
+	// 正则写错或对方改了邮件模板时，日志每条都显示成功，而调用方一直拿不到码。
+	CodeResult string `json:"code_result"`
+	Result     string `json:"result"` // ok / error
+	ErrorCode  string `json:"error_code"`
+	CreatedAt  int64  `json:"created_at"`
 }
 
 // ClientApp 是 client_id 维度的统计与熔断状态。

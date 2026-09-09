@@ -20,6 +20,7 @@ export const queryKeys = {
     lists: () => ['accounts', 'list'] as const,
     list: (params: AccountListParams) => ['accounts', 'list', params] as const,
     detail: (id: string | number) => ['accounts', 'detail', String(id)] as const,
+    domains: () => ['accounts', 'domains'] as const,
   },
   mail: {
     root: ['mail'] as const,

@@ -176,9 +176,10 @@ curl -X POST -H "Authorization: Bearer okc_xxx" -H 'Content-Type: application/js
 | `POST /api/admin/login` | `{username, password}`，成功后下发会话 Cookie |
 | `POST /api/admin/logout` / `GET /api/admin/me` | 注销与取当前用户 |
 | `GET /api/admin/overview` | 总览。含 `by_status`、`by_category`、`fetch_7d`、`token_tiers`、`scheduler`（健康度与容量自检）、`suspended_clients`。`scheduler` 里的容量分两组：轮换的 `steady_rate_per_day` / `max_rate_per_day`，与首验的 `unverified` / `first_verify_per_day` / `first_verify_days`——两者性质不同，轮换需求按账号数除以阈值天数摊开，首验是导入那一刻全部堆进队列的 |
-| `GET /api/admin/accounts` | 列表。`q`、`category_id`、`status`、`channel`、`tag`、`page`、`size` |
+| `GET /api/admin/accounts` | 列表。`q`、`category_id`、`status`、`channel`、`tag`、`domain`、`page`、`size`。`domain` 按邮箱后缀筛选，如 `outlook.com` |
 | `GET /api/admin/accounts/{id}` | 单账号，详情页深链用 |
-| `PATCH /api/admin/accounts/{id}` | `{category_id?, clear_category?, note?, channel_policy?, disabled?, tags?}` |
+| `PATCH /api/admin/accounts/{id}` | `{category_id?, clear_category?, note?, channel_policy?, disabled?, tags?, refresh_token?, client_id?}`。给了 `refresh_token` 会整组覆盖凭据并把账号重置为未验证，同时清掉通道能力、失败计数与 90 天倒计时——它们都是针对上一把授权码的。只给 `client_id` 不给授权码会被拒绝：授权码是绑定 client_id 签发的 |
+| `GET /api/admin/accounts/domains` | 账号池里出现过的邮箱域名及各自数量，供筛选下拉使用 |
 | `POST /api/admin/accounts/{id}/verify` | 手动轮换，返回 `{account, ok, error?}` |
 | `POST /api/admin/accounts/unlock-secrets` | `{password}` 为当前登录密码。通过后本会话 15 分钟内可查看明文密码，返回 `{unlocked_until}`。密码错误返回 403 `CONFIRM_REQUIRED` |
 | `GET /api/admin/accounts/{id}/password` | 返回 `{password, recovery_email, recovery_password}` 三样明文，缺的那项为空串、字段本身始终存在。未解锁返回 403 `CONFIRM_REQUIRED`，三样都没有返回 404 `NO_SECRET`。**每次调用只写一条 `trigger=reveal` 的审计日志**——界面上它们是同一个弹窗的内容，拆开取会把「看了一次」记成三次 |
@@ -293,6 +294,11 @@ curl -X POST -H "Authorization: Bearer okc_xxx" -H 'Content-Type: application/js
 分组查询，`reveal` 是查看账号明文密码的审计，自成一类：它不进取件统计，也不会被
 `clear:"fetch"` 或 `clear:"rotate"` 清掉。这类记录只有 `account_id`、`result` 与时间，
 **不含密码本身**；解锁时输错登录密码也记一条，此时 `account_id` 为 0。
+
+`code_result` 记录这次有没有提取到验证码：空表示本次没要求提取，`hit` 提取到了，
+`miss` 要求了但没提到。**只看 `msg_count` 是不够的**——正则写错或对方改了邮件模板时，
+每条日志都显示"成功，拉回 3 封"，而调用方一直拿不到码。总览页的
+`code_7d` 按这一项算提取成功率。
 
 `result` 取值是 `ok` 与 `error`。`token_tier` 取值 `cached` / `fetch` / `rotate`，
 表示这次走了三档取令牌中的哪一档，可用来核对对令牌端点的真实调用量。

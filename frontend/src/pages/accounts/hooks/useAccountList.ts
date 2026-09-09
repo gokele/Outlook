@@ -16,6 +16,7 @@ export function toListParams(search: AccountsSearch): AccountListParams {
     status: search.status,
     channel: search.channel,
     tag: search.tag,
+    domain: search.domain,
     page: search.page,
     size: search.size,
   };

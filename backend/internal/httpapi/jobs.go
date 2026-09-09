@@ -34,6 +34,7 @@ type startVerifyJobReq struct {
 		Status     string     `json:"status"`
 		Channel    string     `json:"channel"`
 		Tag        string     `json:"tag"`
+		Domain     string     `json:"domain"`
 	} `json:"filter"`
 	Concurrency int `json:"concurrency"`
 }
@@ -51,6 +52,7 @@ func (s *Server) handleStartVerifyJob(w http.ResponseWriter, r *http.Request) {
 		f := store.AccountFilter{
 			Q: req.Filter.Q, CategoryID: req.Filter.CategoryID.Value,
 			Status: req.Filter.Status, Channel: req.Filter.Channel, Tag: req.Filter.Tag,
+			Domain: req.Filter.Domain,
 			// 任务本身有并发闸，这里只是把符合条件的账号取全。
 			Page: 1, Size: maxJobAccounts,
 		}

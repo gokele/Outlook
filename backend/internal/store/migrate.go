@@ -177,6 +177,9 @@ CREATE TABLE IF NOT EXISTS account_projects (
 	{"030_account_projects_idx", `CREATE INDEX IF NOT EXISTS idx_account_projects_key
  ON account_projects (project_key, result)`},
 	{"031_accounts_cooldown", `ALTER TABLE accounts ADD COLUMN cooldown_until BIGINT NOT NULL DEFAULT 0`},
+	{"032_fetch_logs_code", `ALTER TABLE fetch_logs ADD COLUMN code_result TEXT NOT NULL DEFAULT ''`},
+	// 默认 1：既有的 Key 在升级前就能读正文，升级不该悄悄改变它们的权限。
+	{"033_api_keys_allow_body", `ALTER TABLE api_keys ADD COLUMN allow_body INTEGER NOT NULL DEFAULT 1`},
 }
 
 // Migrate 建表并记录已执行的脚本。脚本以 PostgreSQL 语法书写，

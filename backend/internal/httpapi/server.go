@@ -96,6 +96,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/overview", s.handleOverview)
 
 			r.Get("/accounts", s.handleListAccounts)
+			r.Get("/accounts/domains", s.handleListDomains)
 			r.Get("/accounts/export", s.handleExportAccounts)
 			r.Get("/accounts/{id}", s.handleGetAccount)
 			r.Get("/mail", s.handleAdminMail)

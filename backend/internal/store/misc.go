@@ -216,7 +216,7 @@ func (s *Store) AddAccountTags(ctx context.Context, accountIDs []int64, names []
 func (s *Store) ListAPIKeys(ctx context.Context) ([]model.APIKey, error) {
 	rows, err := s.query(ctx,
 		`SELECT id, name, key_hash, prefix, scope_category_ids, rate_limit_qps, ip_allowlist,
-		        allow_export_secrets, allow_lease, last_used_at, revoked_at, created_at
+		        allow_export_secrets, allow_lease, allow_body, last_used_at, revoked_at, created_at
 		 FROM api_keys ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
@@ -237,12 +237,12 @@ func (s *Store) ListAPIKeys(ctx context.Context) ([]model.APIKey, error) {
 func scanAPIKey(sc interface{ Scan(...any) error }) (*model.APIKey, error) {
 	var k model.APIKey
 	var scopes, ips string
-	var exp, lease int
+	var exp, lease, body int
 	if err := sc.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Prefix, &scopes, &k.RateLimitQPS, &ips,
-		&exp, &lease, &k.LastUsedAt, &k.RevokedAt, &k.CreatedAt); err != nil {
+		&exp, &lease, &body, &k.LastUsedAt, &k.RevokedAt, &k.CreatedAt); err != nil {
 		return nil, err
 	}
-	k.AllowExportSecrets, k.AllowLease = exp != 0, lease != 0
+	k.AllowExportSecrets, k.AllowLease, k.AllowBody = exp != 0, lease != 0, body != 0
 	k.ScopeCategoryIDs = []int64{}
 	k.IPAllowlist = []string{}
 	_ = json.Unmarshal([]byte(scopes), &k.ScopeCategoryIDs)
@@ -256,17 +256,18 @@ func (s *Store) CreateAPIKey(ctx context.Context, k *model.APIKey) (int64, error
 	ips, _ := json.Marshal(k.IPAllowlist)
 	return s.insertReturningID(ctx,
 		`INSERT INTO api_keys (name, key_hash, prefix, scope_category_ids, rate_limit_qps,
-		   ip_allowlist, allow_export_secrets, allow_lease, last_used_at, revoked_at, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,0,0,?)`,
+		   ip_allowlist, allow_export_secrets, allow_lease, allow_body, last_used_at, revoked_at, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,0,0,?)`,
 		k.Name, k.KeyHash, k.Prefix, string(scopes), k.RateLimitQPS, string(ips),
-		boolInt(k.AllowExportSecrets), boolInt(k.AllowLease), time.Now().Unix())
+		boolInt(k.AllowExportSecrets), boolInt(k.AllowLease), boolInt(k.AllowBody),
+		time.Now().Unix())
 }
 
 // GetAPIKeyByHash 按哈希查找未吊销的 Key，用于请求鉴权。
 func (s *Store) GetAPIKeyByHash(ctx context.Context, hash string) (*model.APIKey, error) {
 	row := s.queryRow(ctx,
 		`SELECT id, name, key_hash, prefix, scope_category_ids, rate_limit_qps, ip_allowlist,
-		        allow_export_secrets, allow_lease, last_used_at, revoked_at, created_at
+		        allow_export_secrets, allow_lease, allow_body, last_used_at, revoked_at, created_at
 		 FROM api_keys WHERE key_hash = ? AND revoked_at = 0`, hash)
 	k, err := scanAPIKey(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -462,6 +463,40 @@ func (s *Store) SessionSecretsUntil(ctx context.Context, token string) (int64, e
 		return 0, ErrNotFound
 	}
 	return until, err
+}
+
+// ListAccountDomains 列出账号池里出现过的邮箱域名及各自数量。
+//
+// 域名切分放在 SQL 里做而不是取回全部邮箱在 Go 里算：几万个账号全捞回来
+// 只为数一下后缀，代价完全不成比例。两种数据库的字符串函数不同，在此分开写。
+func (s *Store) ListAccountDomains(ctx context.Context) ([]DomainCount, error) {
+	expr := `substr(email, instr(email, '@') + 1)`
+	if s.dialect == Postgres {
+		expr = `split_part(email, '@', 2)`
+	}
+	rows, err := s.query(ctx,
+		`SELECT `+expr+` AS d, COUNT(*) FROM accounts GROUP BY d ORDER BY COUNT(*) DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DomainCount{}
+	for rows.Next() {
+		var d DomainCount
+		if err := rows.Scan(&d.Domain, &d.Count); err != nil {
+			return nil, err
+		}
+		if d.Domain != "" {
+			out = append(out, d)
+		}
+	}
+	return out, rows.Err()
+}
+
+// DomainCount 是一个邮箱域名及其账号数。
+type DomainCount struct {
+	Domain string `json:"domain"`
+	Count  int    `json:"count"`
 }
 
 // PurgeExpiredSessions 清理过期会话，由调度器顺带调用。

@@ -143,6 +143,12 @@ export interface Overview {
   by_status: Record<AccountStatus, number>;
   by_category: Array<{ id: number | string; name: string; count: number }>;
   fetch_7d: { ok: number; fail: number };
+  /**
+   * 近 7 天的验证码提取成败。
+   * 取件成功不等于拿到了码 —— 正则写错或对方改了邮件模板时,
+   * 每条日志都显示成功, 而调用方一直拿不到码, 这一项是唯一能看出来的地方。
+   */
+  code_7d: { hit: number; miss: number };
   token_tiers: { cached: number; fetch: number; rotate: number };
   scheduler: SchedulerHealth;
   suspended_clients: SuspendedClient[];
@@ -188,6 +194,11 @@ export interface APIKey {
   ip_allowlist: string[];
   allow_export_secrets: boolean;
   allow_lease: boolean;
+  /**
+   * 为假时该密钥取不到邮件正文, 也读不了原始 MIME。
+   * 用于把接码接口给第三方: 对方只需要验证码, 不需要看到整封邮件。
+   */
+  allow_body: boolean;
   /** 吊销时刻, 0 表示仍然生效 */
   revoked_at: number;
   last_used_at: number;

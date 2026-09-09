@@ -22,9 +22,11 @@ interface FormValues {
   channel_policy: ChannelPolicy;
   tags: string[];
   disabled: boolean;
+  refresh_token?: string;
+  client_id?: string;
 }
 
-/** 单账号编辑弹窗: 分类、备注、通道策略、标签与启停 */
+/** 单账号编辑弹窗: 分类、备注、通道策略、标签、启停与凭据更换 */
 export function EditAccountModal({
   account,
   open,
@@ -73,13 +75,21 @@ export function EditAccountModal({
     if (changed) {
       await onSubmitProxy(proxy);
     }
-    onSubmit({
+    const patch: AccountPatch = {
       category_id: values.category_id ?? null,
       note: values.note ?? '',
       channel_policy: values.channel_policy,
       tags: values.tags ?? [],
       disabled: values.disabled,
-    });
+    };
+    // 凭据只在真填了的时候才带上 —— 传空串会被后端当成"要把授权码清空"。
+    const token = values.refresh_token?.trim();
+    if (token) {
+      patch.refresh_token = token;
+      const cid = values.client_id?.trim();
+      if (cid) patch.client_id = cid;
+    }
+    onSubmit(patch);
   };
 
   return (
@@ -107,6 +117,32 @@ export function EditAccountModal({
         <Form.Item name="channel_policy" label="取件通道策略">
           <Select options={CHANNEL_POLICY_OPTIONS} />
         </Form.Item>
+        {/*
+          换授权码。放在最后并单独隔开：它与上面那些"改个标签"的操作不是一个量级 ——
+          一提交就会把账号重置为未验证，旧的通道能力与失败历史全部作废。
+        */}
+        <Form.Item
+          name="refresh_token"
+          label="更换授权码"
+          extra="留空表示不更换。填了会把账号重置为未验证，旧的通道探测结果与失败计数一并清除"
+        >
+          <Input.TextArea
+            rows={3}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="粘贴新的 refresh_token，留空则不改动"
+            style={{ fontFamily: 'var(--app-font-mono)', fontSize: 12 }}
+          />
+        </Form.Item>
+
+        <Form.Item
+          name="client_id"
+          label="更换 client_id"
+          extra="必须与新授权码同时填写 —— 授权码是绑定 client_id 签发的，换了应用注册原授权码即失效"
+        >
+          <Input spellCheck={false} placeholder="留空则沿用原有 client_id" />
+        </Form.Item>
+
         <Form.Item name="note" label="备注">
           <Input.TextArea rows={3} maxLength={500} showCount placeholder="用途、来源等" />
         </Form.Item>
