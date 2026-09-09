@@ -1,5 +1,8 @@
-# 构建产物
-dist/
+# 构建产物。
+# dist 前面的斜杠不能省: 不带斜杠会匹配任意层级的 dist 目录, 把
+# backend/web/dist 一起排除掉 —— 而 git 排除了目录就不再往里看,
+# 后面那条 !backend/web/dist/.gitkeep 也就永远不生效。
+/dist/
 backend/data/
 backend/logs/
 frontend/dist/
