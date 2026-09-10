@@ -225,3 +225,151 @@ func TestPartitionDeferredWhenTableIsLarge(t *testing.T) {
 		t.Fatalf("推迟后数据应原样保留，实际 %d 行", n)
 	}
 }
+
+// 日志表切分区：两层分区都要建出来，日志按 kind 落到对应的那一支。
+func TestFetchLogsIsPartitioned(t *testing.T) {
+	pgOnly(t)
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	if !st.isPartitionedTable(ctx, "fetch_logs") {
+		t.Fatal("fetch_logs 应该是分区表")
+	}
+	if !st.isPartitionedTable(ctx, "fetch_logs_ops") {
+		t.Fatal("fetch_logs_ops 应该再按天分区")
+	}
+
+	now := time.Now().Unix()
+	mkLog(t, st, &model.FetchLog{Trigger: model.TriggerReveal, Result: "ok", CreatedAt: now})
+	mkLog(t, st, &model.FetchLog{Trigger: "api", Result: "ok", CreatedAt: now})
+
+	var audit, ops int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM fetch_logs_audit`).Scan(&audit); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM fetch_logs_ops`).Scan(&ops); err != nil {
+		t.Fatal(err)
+	}
+	if audit != 1 || ops != 1 {
+		t.Fatalf("审计/运营分支应各有 1 条，实际 %d/%d", audit, ops)
+	}
+
+	// 当天的日志必须落进当天那个分区，而不是兜底分区 ——
+	// 落进兜底分区的行到期后 DROP 不掉。
+	var stray int
+	if err := st.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM fetch_logs_ops_default`).Scan(&stray); err != nil {
+		t.Fatal(err)
+	}
+	if stray != 0 {
+		t.Errorf("当天日志不该落进兜底分区，实际有 %d 条", stray)
+	}
+}
+
+// 过期的日志分区要被整个 DROP 掉，而不是一行行 DELETE。
+func TestExpiredLogPartitionsAreDropped(t *testing.T) {
+	pgOnly(t)
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	// 造一个十天前的分区并往里写一条日志。
+	old := dayStart(time.Now().AddDate(0, 0, -10))
+	name := logPartitionName(old)
+	if _, err := st.db.ExecContext(ctx, fmt.Sprintf(
+		`CREATE TABLE IF NOT EXISTS %s PARTITION OF fetch_logs_ops FOR VALUES FROM (%d) TO (%d)`,
+		name, old, old+24*3600)); err != nil {
+		t.Fatalf("建历史分区失败: %v", err)
+	}
+	mkLog(t, st, &model.FetchLog{Trigger: "api", Result: "ok", CreatedAt: old + 100})
+
+	if err := st.PurgeOldLogs(ctx, 3); err != nil {
+		t.Fatalf("清理失败: %v", err)
+	}
+
+	var exists int
+	if err := st.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pg_class WHERE relname = $1
+		   AND relnamespace = current_schema()::regnamespace`, name).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists != 0 {
+		t.Errorf("过期分区 %s 应被整个删掉", name)
+	}
+	// 汇总要活下来：日志清了，统计还得答得上来。
+	fs, err := st.FetchStatsSince(ctx, time.Now().AddDate(0, 0, -30).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fs.OK != 1 {
+		t.Errorf("汇总应当保留，实际 %d", fs.OK)
+	}
+}
+
+// 从有数据的普通日志表升级成分区表：一条不少，序列接着往下发。
+func TestFetchLogsConversionPreservesData(t *testing.T) {
+	dsn := pgOnly(t)
+	st := newPostgresTestStore(t, dsn, false)
+	ctx := context.Background()
+
+	// 停在日志切分区之前：kind 列已经有了，表还是普通表。
+	migrateUpTo(t, st, "042_backfill_log_daily_stats")
+	if st.isPartitionedTable(ctx, "fetch_logs") {
+		t.Fatal("这一步还不该是分区表")
+	}
+
+	const n = 40
+	now := time.Now().Unix()
+	for i := range n {
+		trigger := "api"
+		if i%5 == 0 {
+			trigger = model.TriggerReveal
+		}
+		// 跨越多天，确保搬运时每一天都有对应的分区可落。
+		mkLog(t, st, &model.FetchLog{
+			AccountID: int64(i), Trigger: trigger, Result: "ok",
+			CreatedAt: now - int64(i)*24*3600,
+		})
+	}
+	var maxID int64
+	if err := st.queryRow(ctx, `SELECT MAX(id) FROM fetch_logs`).Scan(&maxID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := partitionFetchLogs(ctx, st); err != nil {
+		t.Fatalf("日志切分区失败: %v", err)
+	}
+	if err := ensureLogIndexes(ctx, st); err != nil {
+		t.Fatalf("重建日志索引失败: %v", err)
+	}
+	if !st.isPartitionedTable(ctx, "fetch_logs") {
+		t.Fatal("切完之后应该是分区表")
+	}
+
+	var got int
+	if err := st.queryRow(ctx, `SELECT COUNT(*) FROM fetch_logs`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != n {
+		t.Fatalf("切分区后应有 %d 条日志，实际 %d 条", n, got)
+	}
+
+	mkLog(t, st, &model.FetchLog{Trigger: "api", Result: "ok", CreatedAt: now})
+	var newMax int64
+	if err := st.queryRow(ctx, `SELECT MAX(id) FROM fetch_logs`).Scan(&newMax); err != nil {
+		t.Fatal(err)
+	}
+	if newMax <= maxID {
+		t.Fatalf("切分区后新日志拿到 id %d，不大于切之前的最大值 %d —— 序列没续上", newMax, maxID)
+	}
+
+	var leftover int
+	if err := st.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pg_class
+		 WHERE relname IN ('fetch_logs_old', 'fetch_logs_old_id_seq')
+		   AND relnamespace = current_schema()::regnamespace`).Scan(&leftover); err != nil {
+		t.Fatal(err)
+	}
+	if leftover != 0 {
+		t.Errorf("切完之后还留着 %d 个旧对象", leftover)
+	}
+}

@@ -122,6 +122,11 @@ func run(log *slog.Logger, createUser string) error {
 	if err := st.Migrate(ctx); err != nil {
 		return fmt.Errorf("执行迁移失败: %w", err)
 	}
+	// 日志按天分区，分区必须先于日志存在。日常维护由调度器每小时做一次，
+	// 但那是启动一小时之后的事 —— 中间这段时间也要有分区可写。
+	if err := st.EnsureLogPartitions(ctx); err != nil {
+		return fmt.Errorf("准备日志分区失败: %w", err)
+	}
 	log.Info("数据库就绪", "dialect", st.Dialect())
 
 	box, err := crypto.New(cfg.MasterKey)

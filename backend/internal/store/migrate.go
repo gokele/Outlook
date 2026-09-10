@@ -197,6 +197,32 @@ CREATE TABLE IF NOT EXISTS account_projects (
 	{name: "036_backfill_shard_domain", fn: backfillShardDomain},
 	{name: "037_partition_accounts", fn: partitionAccounts},
 	{name: "038_account_indexes", fn: ensureAccountIndexes},
+
+	// ---- 日志表切分 ----
+	//
+	// accounts 是存量大，fetch_logs 是增量大，压垮数据库的方式不同。
+	// 详见 logpartition.go 开头。
+
+	// 存量日志的 kind 不在这里回填。
+	//
+	// `+"`UPDATE fetch_logs SET kind = ... WHERE trigger_src = 'reveal'`"+` 看着简单，
+	// 但 trigger_src 上没有索引，它是一次全表扫描加整表更新 —— 在一张已经很大的
+	// 日志表上，那是启动时凭空多出来的几分钟，还带着一个巨大的事务。
+	//
+	// 而这一列只在切分区时才真正起作用（没分区时清理仍按 trigger_src 过滤），
+	// 切分区本来就要逐行读一遍全表，顺手算出来就是了。见 fetchLogsCopySelect。
+	{name: "039_fetch_logs_kind", sql: `ALTER TABLE fetch_logs ADD COLUMN kind TEXT NOT NULL DEFAULT 'ops'`},
+	{name: "041_log_daily_stats", sql: `
+CREATE TABLE IF NOT EXISTS log_daily_stats (
+  day    BIGINT NOT NULL,
+  metric TEXT   NOT NULL,
+  value  TEXT   NOT NULL,
+  n      BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, metric, value)
+)`},
+	{name: "042_backfill_log_daily_stats", fn: backfillLogDailyStats},
+	{name: "043_partition_fetch_logs", fn: partitionFetchLogs},
+	{name: "044_log_indexes", fn: ensureLogIndexes},
 }
 
 // accountIndexes 是 accounts 上的全部索引，定义只此一处。

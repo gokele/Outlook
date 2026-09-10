@@ -142,6 +142,21 @@ func partitionAccounts(ctx context.Context, s *Store) error {
 	               SELECT ` + accountsCopyCols + ` FROM accounts_old`); err != nil {
 		return err
 	}
+
+	// 搬完先数一遍，对不上就整个回滚，旧表原封不动。
+	//
+	// 这一步不是多余的谨慎。数据搬丢了不会报错，也不会有人当场发现 ——
+	// 等到某天发现少了一批账号，早就没法把它们和这次迁移联系起来了。
+	// 而丢行是有真实成因的：分片号算错落到没建的分区、列对不齐、
+	// 唯一约束把重复行吃掉。所以这里必须当场验，而不是事后靠人去核。
+	var copied int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts`).Scan(&copied); err != nil {
+		return fmt.Errorf("校验搬运结果失败: %w", err)
+	}
+	if copied != rows {
+		return fmt.Errorf("切分区中止：原表 %d 行，搬过去只有 %d 行，已回滚，原表未改动", rows, copied)
+	}
+
 	if err := run(`DROP TABLE accounts_old`); err != nil {
 		return err
 	}
