@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"regexp"
 	"sync"
+	"sync/atomic"
 
 	"github.com/kele/outlook-console/internal/fetcher"
 )
@@ -77,7 +78,20 @@ var codeRules = []struct {
 // 而且传 default 与传这个字符串的效果需要一致。
 const DefaultCodePattern = "default"
 
-var codeCache sync.Map
+// maxCachedPatterns 是自定义正则的缓存上限。
+//
+// 缓存的键是调用方传来的 code_regex —— 也就是外部输入。没有上限的话，
+// 一个持续传随机正则的调用方（写错的客户端，或有意为之）会让这张表
+// 无限增长，最终把进程撑爆。正常用法下模式只有寥寥几个，这个上限
+// 永远碰不到；碰到了说明来路不正，直接清空重来即可，
+// 代价只是接下来几次请求要重新编译。
+const maxCachedPatterns = 256
+
+var (
+	codeCache sync.Map
+	// cachedPatterns 记录当前缓存了多少条，用来判断是否该清空。
+	cachedPatterns atomic.Int64
+)
 
 // ExtractCode 从主题与正文中提取验证码。
 //
@@ -195,9 +209,26 @@ func compileCode(pattern string) (*regexp.Regexp, bool) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		// 编译失败的正则也缓存成 nil，避免每次请求都重新编译一遍坏值。
-		codeCache.Store(pattern, (*regexp.Regexp)(nil))
+		storePattern(pattern, nil)
 		return nil, false
 	}
-	codeCache.Store(pattern, re)
+	storePattern(pattern, re)
 	return re, true
+}
+
+// storePattern 写入缓存，超过上限时整体清空。
+//
+// 整体清空而不是 LRU 淘汰：正常用法下模式就那么几个，根本走不到这里；
+// 走到了说明是异常输入，此时维护一套淘汰顺序的复杂度换不来任何东西。
+func storePattern(pattern string, re *regexp.Regexp) {
+	if cachedPatterns.Load() >= maxCachedPatterns {
+		codeCache.Range(func(k, _ any) bool {
+			codeCache.Delete(k)
+			return true
+		})
+		cachedPatterns.Store(0)
+	}
+	if _, loaded := codeCache.LoadOrStore(pattern, re); !loaded {
+		cachedPatterns.Add(1)
+	}
 }

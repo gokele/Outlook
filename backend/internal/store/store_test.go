@@ -550,3 +550,94 @@ func TestRecordProjectFailClearsRecord(t *testing.T) {
 		t.Fatalf("清掉记录后应可重新领取: %v", err)
 	}
 }
+
+// TestDeleteAccountCleansProjects 钉住一类容易漏的 bug：
+// 每张挂着 account_id 的附属表都要在删号时清掉。
+//
+// account_projects 曾经被漏掉，后果不只是留下永不回收的孤儿行 ——
+// ProjectUsedCount 按行数算"这个项目已经用掉几个"，删号的记录留着，
+// 这个数字会越来越大，最后报出的"已用掉 N 个"与实际完全对不上。
+func TestDeleteAccountCleansProjects(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	a := mkAccount(t, st, "del@outlook.com", 0, 0)
+
+	if err := st.RecordProjectUse(ctx, a, "siteX", ProjectSuccess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AcquireLease(ctx, a, 1, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAccountTags(ctx, a, []string{"批次A"}); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := st.ProjectUsedCount(ctx, "siteX"); n != 1 {
+		t.Fatalf("应记入 1 个，实际 %d", n)
+	}
+
+	if err := st.DeleteAccounts(ctx, []int64{a}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 每张附属表都不该再有这个账号的行。
+	for _, tbl := range []string{"account_projects", "account_leases", "account_tags", "account_tokens"} {
+		var n int
+		if err := st.queryRow(ctx,
+			`SELECT COUNT(*) FROM `+tbl+` WHERE account_id = ?`, a).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("%s 留下了 %d 行孤儿数据", tbl, n)
+		}
+	}
+	if n, _ := st.ProjectUsedCount(ctx, "siteX"); n != 0 {
+		t.Fatalf("删号后项目已用数应归零，实际 %d —— 这个数字会一直虚高", n)
+	}
+}
+
+// TestPurgeKeepsAuditLogs 校验审计日志用更长的保留期。
+//
+// "谁看了哪个账号的密码"与"某次取件成功没有"是两类东西：后者过了一个月
+// 就没人再看，前者恰恰是事后追溯才需要 —— 而追溯往往发生在事情过去很久之后。
+// 用同一个保留期清掉它，等于在最需要的时候没有记录。
+func TestPurgeKeepsAuditLogs(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	old := time.Now().AddDate(0, 0, -60).Unix() // 60 天前，超过普通日志的 30 天保留期
+
+	for _, tr := range []string{"api", model.TriggerReveal} {
+		if err := st.InsertFetchLog(ctx, &model.FetchLog{
+			AccountID: 1, Trigger: tr, Result: "ok", CreatedAt: old,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := st.PurgeOldLogs(ctx, 30); err != nil {
+		t.Fatal(err)
+	}
+
+	fetch, _, _ := st.ListFetchLogs(ctx, LogFilter{Type: "fetch"})
+	if len(fetch) != 0 {
+		t.Errorf("60 天前的取件日志应被清掉，实际还剩 %d 条", len(fetch))
+	}
+	reveal, _, _ := st.ListFetchLogs(ctx, LogFilter{Type: "reveal"})
+	if len(reveal) != 1 {
+		t.Fatalf("审计日志应保留，实际剩 %d 条", len(reveal))
+	}
+
+	// 超过审计保留期的才清。
+	tooOld := time.Now().AddDate(0, 0, -AuditKeepDays-1).Unix()
+	if err := st.InsertFetchLog(ctx, &model.FetchLog{
+		AccountID: 2, Trigger: model.TriggerReveal, Result: "ok", CreatedAt: tooOld,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PurgeOldLogs(ctx, 30); err != nil {
+		t.Fatal(err)
+	}
+	reveal, _, _ = st.ListFetchLogs(ctx, LogFilter{Type: "reveal"})
+	if len(reveal) != 1 {
+		t.Fatalf("超过 %d 天的审计日志应被清掉，实际剩 %d 条", AuditKeepDays, len(reveal))
+	}
+}

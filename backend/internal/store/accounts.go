@@ -354,12 +354,19 @@ func (s *Store) DeleteAccounts(ctx context.Context, ids []int64) error {
 	for i, id := range ids {
 		args[i] = id
 	}
+	// 每一张挂着 account_id 的附属表都要清，漏一张就留下永远不会被回收的孤儿行。
+	// account_projects 尤其要清：ProjectUsedCount 按行数算"这个项目已经用掉几个"，
+	// 留着删号的记录会让这个数字越来越大，最后报出的"已用掉 N 个"与实际完全对不上。
+	//
+	// fetch_logs 不在此列：它是历史，账号删了不代表那些取件没发生过。
+	// 列表接口用 LEFT JOIN 取邮箱，取不到时显示为空，本来就能处理这种情况。
 	ph := placeholders(len(ids))
 	for _, q := range []string{
-		`DELETE FROM account_tokens WHERE account_id IN (` + ph + `)`,
-		`DELETE FROM account_leases WHERE account_id IN (` + ph + `)`,
-		`DELETE FROM account_tags   WHERE account_id IN (` + ph + `)`,
-		`DELETE FROM accounts       WHERE id         IN (` + ph + `)`,
+		`DELETE FROM account_tokens   WHERE account_id IN (` + ph + `)`,
+		`DELETE FROM account_leases   WHERE account_id IN (` + ph + `)`,
+		`DELETE FROM account_tags     WHERE account_id IN (` + ph + `)`,
+		`DELETE FROM account_projects WHERE account_id IN (` + ph + `)`,
+		`DELETE FROM accounts         WHERE id         IN (` + ph + `)`,
 	} {
 		if _, err := s.exec(ctx, q, args...); err != nil {
 			return err

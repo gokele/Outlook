@@ -98,13 +98,30 @@ func (s *Store) ListFetchLogs(ctx context.Context, f LogFilter) ([]model.FetchLo
 	return out, total, rows.Err()
 }
 
+// AuditKeepDays 是审计日志的保留期，明显长于普通取件日志。
+//
+// 「谁在什么时候看了哪个账号的密码」与「某次取件成功没有」是两类东西：
+// 后者过了一个月就没人再看，前者恰恰是事后追溯才需要 —— 而事后追溯往往
+// 发生在事情过去很久之后。用同一个保留期清掉它，等于在最需要的时候没有记录。
+const AuditKeepDays = 365
+
 // PurgeOldLogs 清理超过保留期的日志。fetch_logs 是唯一会持续增长的表。
+//
+// 审计日志（trigger_src = reveal）单独用更长的保留期，理由见 AuditKeepDays。
 func (s *Store) PurgeOldLogs(ctx context.Context, keepDays int) error {
 	if keepDays <= 0 {
 		keepDays = 30
 	}
 	cutoff := time.Now().AddDate(0, 0, -keepDays).Unix()
-	_, err := s.exec(ctx, `DELETE FROM fetch_logs WHERE created_at < ?`, cutoff)
+	if _, err := s.exec(ctx,
+		`DELETE FROM fetch_logs WHERE created_at < ? AND trigger_src <> ?`,
+		cutoff, model.TriggerReveal); err != nil {
+		return err
+	}
+	auditCutoff := time.Now().AddDate(0, 0, -AuditKeepDays).Unix()
+	_, err := s.exec(ctx,
+		`DELETE FROM fetch_logs WHERE created_at < ? AND trigger_src = ?`,
+		auditCutoff, model.TriggerReveal)
 	return err
 }
 

@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/kele/outlook-console/internal/fetcher"
@@ -148,5 +150,30 @@ func TestHasDigitAndLetter(t *testing.T) {
 		if got := hasDigitAndLetter(in); got != want {
 			t.Errorf("%q 期望 %v，实际 %v", in, want, got)
 		}
+	}
+}
+
+// TestPatternCacheIsBounded 校验自定义正则的缓存有上限。
+//
+// 缓存的键是调用方传来的 code_regex —— 也就是外部输入。没有上限的话，
+// 一个持续传随机正则的调用方（写错的客户端，或有意为之）会让这张表
+// 无限增长，最终把进程撑爆。
+func TestPatternCacheIsBounded(t *testing.T) {
+	m := msg("", "code 482913", "")
+
+	// 灌入远超上限的不同模式。
+	for i := 0; i < maxCachedPatterns*3; i++ {
+		ExtractCode(m, fmt.Sprintf(`\b(\d{4,8})\b%s`, strings.Repeat("|x", i%5+1)))
+	}
+
+	n := 0
+	codeCache.Range(func(any, any) bool { n++; return true })
+	if n > maxCachedPatterns {
+		t.Fatalf("缓存条数应受限于 %d，实际 %d", maxCachedPatterns, n)
+	}
+
+	// 清空之后功能照常 —— 代价只是重新编译一次。
+	if got := ExtractCode(m, `\d{6}`); got != "482913" {
+		t.Fatalf("清空缓存后仍应正常工作，实际 %q", got)
 	}
 }
