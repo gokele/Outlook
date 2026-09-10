@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -167,8 +168,10 @@ func partitionAccounts(ctx context.Context, s *Store) error {
 		`SELECT pg_get_serial_sequence('accounts', 'id')`).Scan(&newSeq); err != nil {
 		return fmt.Errorf("读取新序列失败: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx,
-		`SELECT setval($1, GREATEST((SELECT COALESCE(MAX(id), 0) FROM accounts), 1))`, newSeq); err != nil {
+	// setval 的第一个参数是 regclass，不是文本。用占位符传会依赖驱动怎么编码
+	// 一个未知类型的参数 —— 名字是数据库自己给出来的，直接拼成字面量更稳妥。
+	if err := run(`SELECT setval(` + quoteLiteral(newSeq) +
+		`, GREATEST((SELECT COALESCE(MAX(id), 0) FROM accounts), 1))`); err != nil {
 		return fmt.Errorf("重置 accounts.id 序列失败: %w", err)
 	}
 
@@ -189,4 +192,13 @@ func (s *Store) IsPartitioned(ctx context.Context) bool {
 	err := s.db.QueryRowContext(ctx,
 		`SELECT relkind FROM pg_class WHERE oid = to_regclass('accounts')`).Scan(&kind)
 	return err == nil && kind == "p"
+}
+
+// quoteLiteral 把一个字符串包成 SQL 字面量。
+//
+// 只用在把数据库自己返回的对象名（序列名之类）拼回语句里的场合 ——
+// 那些地方用占位符反而不对，因为参数的目标类型是 regclass 而不是文本。
+// 转义照做，不因为"这个值可信"就省掉：可信是当下的判断，转义是不变的性质。
+func quoteLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

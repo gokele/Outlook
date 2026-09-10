@@ -217,8 +217,9 @@ func partitionFetchLogs(ctx context.Context, s *Store) error {
 		`SELECT pg_get_serial_sequence('fetch_logs', 'id')`).Scan(&newSeq); err != nil {
 		return fmt.Errorf("读取新序列失败: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx,
-		`SELECT setval($1, GREATEST((SELECT COALESCE(MAX(id), 0) FROM fetch_logs), 1))`, newSeq); err != nil {
+	// 理由同 partitionAccounts：setval 的第一个参数是 regclass 而不是文本。
+	if err := run(`SELECT setval(` + quoteLiteral(newSeq) +
+		`, GREATEST((SELECT COALESCE(MAX(id), 0) FROM fetch_logs), 1))`); err != nil {
 		return fmt.Errorf("重置 fetch_logs.id 序列失败: %w", err)
 	}
 
