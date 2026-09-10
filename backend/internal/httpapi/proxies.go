@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/store"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/store"
 )
 
 // maxBulkProxies 是单次批量导入的行数上限。

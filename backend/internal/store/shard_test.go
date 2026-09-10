@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // 分片号必须只由邮箱决定，且与邮箱的书写形式无关。
@@ -87,7 +87,10 @@ func TestInsertFillsShardAndDomain(t *testing.T) {
 // 存量账号靠回填补齐派生列。这里把已有行改回"未处理"的样子，
 // 再跑一次回填，模拟从旧版本升级上来的库。
 func TestBackfillShardDomain(t *testing.T) {
-	st := newTestStore(t)
+	// 必须在还没切分区的库上做：分区表里 shard 是分区键，
+	// 把它改成 -1 会直接被拒（没有哪个分区收这个值）—— 而这正说明
+	// "未回填"这个状态只存在于切分区之前，回填也只在那时候跑。
+	st := newPreShardStore(t)
 	ctx := context.Background()
 	emails := []string{"a@outlook.com", "b@hotmail.com", "c@live.cn"}
 	for _, e := range emails {

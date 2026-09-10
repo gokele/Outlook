@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // InsertFetchLog 写一条取件或轮换日志。

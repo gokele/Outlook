@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // ErrLeased 表示账号已被其他调用方租约占用。
@@ -93,10 +93,19 @@ type ClaimOptions struct {
 // 换个项目照样能用，这正是账号池能被复用的前提。
 func (s *Store) ClaimFreeAccount(ctx context.Context, opt ClaimOptions) (*model.Account, *model.Lease, error) {
 	now := time.Now().Unix()
+	// 「没有有效租约」用 NOT EXISTS 而不是 LEFT JOIN + IS NULL。
+	//
+	// 两种写法在 SQLite 上等价，在 PostgreSQL 上却差一个能不能跑：
+	// 这条查询末尾要加 FOR UPDATE SKIP LOCKED 让多实例自动分工，而 PostgreSQL
+	// 明确拒绝对外连接的可空一侧加行锁（FOR UPDATE cannot be applied to the
+	// nullable side of an outer join）。也就是说 LEFT JOIN 那版在生产上
+	// 根本不工作 —— 只在 SQLite 上测过，所以一直没人发现。
 	q := `SELECT ` + accountCols + ` FROM accounts a
-	      LEFT JOIN account_leases l ON l.account_id = a.id AND l.expires_at > ?
 	      WHERE a.disabled = 0 AND a.status NOT IN ('INVALID','BANNED')
-	        AND l.account_id IS NULL AND a.cooldown_until <= ?`
+	        AND a.cooldown_until <= ?
+	        AND NOT EXISTS (
+	          SELECT 1 FROM account_leases l
+	          WHERE l.account_id = a.id AND l.expires_at > ?)`
 	args := []any{now, now}
 	if opt.CategoryID != nil {
 		q += ` AND a.category_id = ?`

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // ErrNoProxyAvailable 表示候选池里没有可用出口。

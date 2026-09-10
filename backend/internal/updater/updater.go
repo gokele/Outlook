@@ -111,7 +111,7 @@ func (u *Updater) Latest(ctx context.Context) (*Release, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "outlook-console-updater")
+	req.Header.Set("User-Agent", "outlook-updater")
 
 	resp, err := u.cfg.HTTP.Do(req)
 	if err != nil {
@@ -275,7 +275,7 @@ func (u *Updater) fetch(ctx context.Context, url string, limit int64) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "outlook-console-updater")
+	req.Header.Set("User-Agent", "outlook-updater")
 	resp, err := u.cfg.HTTP.Do(req)
 	if err != nil {
 		return nil, err

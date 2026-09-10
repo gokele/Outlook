@@ -9,16 +9,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/kele/outlook-console/internal/config"
-	"github.com/kele/outlook-console/internal/crypto"
-	"github.com/kele/outlook-console/internal/importer"
-	"github.com/kele/outlook-console/internal/jobs"
-	"github.com/kele/outlook-console/internal/orchestrator"
-	"github.com/kele/outlook-console/internal/proxypool"
-	"github.com/kele/outlook-console/internal/scheduler"
-	"github.com/kele/outlook-console/internal/store"
-	"github.com/kele/outlook-console/internal/tokensvc"
-	"github.com/kele/outlook-console/web"
+	"github.com/gokele/Outlook/internal/config"
+	"github.com/gokele/Outlook/internal/crypto"
+	"github.com/gokele/Outlook/internal/importer"
+	"github.com/gokele/Outlook/internal/jobs"
+	"github.com/gokele/Outlook/internal/orchestrator"
+	"github.com/gokele/Outlook/internal/proxypool"
+	"github.com/gokele/Outlook/internal/scheduler"
+	"github.com/gokele/Outlook/internal/store"
+	"github.com/gokele/Outlook/internal/tokensvc"
+	"github.com/gokele/Outlook/web"
 )
 
 // Server 持有全部依赖并挂载路由。

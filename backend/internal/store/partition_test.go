@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // pgOnly 跳过没有真实 PostgreSQL 的运行。

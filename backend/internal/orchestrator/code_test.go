@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/fetcher"
+	"github.com/gokele/Outlook/internal/fetcher"
 )
 
 // msg 造一封只填了需要的字段的邮件。

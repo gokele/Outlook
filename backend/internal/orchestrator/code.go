@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/kele/outlook-console/internal/fetcher"
+	"github.com/gokele/Outlook/internal/fetcher"
 )
 
 // 验证码提取。

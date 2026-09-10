@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // rawMultipart 是一封带附件、正文有纯文本与 HTML 两版的邮件，用于覆盖 MIME 解析。

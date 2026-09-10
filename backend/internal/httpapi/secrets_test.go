@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/store"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/store"
 )
 
 // seedAccountWithPassword 建一个导入时带了密码的账号。

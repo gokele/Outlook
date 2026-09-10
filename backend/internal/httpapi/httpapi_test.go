@@ -13,16 +13,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/config"
-	"github.com/kele/outlook-console/internal/crypto"
-	"github.com/kele/outlook-console/internal/fetcher"
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/oauth"
-	"github.com/kele/outlook-console/internal/orchestrator"
-	"github.com/kele/outlook-console/internal/scheduler"
-	"github.com/kele/outlook-console/internal/store"
-	"github.com/kele/outlook-console/internal/store/storetest"
-	"github.com/kele/outlook-console/internal/tokensvc"
+	"github.com/gokele/Outlook/internal/config"
+	"github.com/gokele/Outlook/internal/crypto"
+	"github.com/gokele/Outlook/internal/fetcher"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/oauth"
+	"github.com/gokele/Outlook/internal/orchestrator"
+	"github.com/gokele/Outlook/internal/scheduler"
+	"github.com/gokele/Outlook/internal/store"
+	"github.com/gokele/Outlook/internal/store/storetest"
+	"github.com/gokele/Outlook/internal/tokensvc"
 )
 
 type testEnv struct {

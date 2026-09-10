@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // imapMailboxes 是各文件夹的邮箱候选名。垃圾邮件在不同账号上叫法不一致，

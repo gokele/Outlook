@@ -12,12 +12,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/kele/outlook-console/internal/crypto"
-	"github.com/kele/outlook-console/internal/importer"
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/orchestrator"
-	"github.com/kele/outlook-console/internal/scheduler"
-	"github.com/kele/outlook-console/internal/store"
+	"github.com/gokele/Outlook/internal/crypto"
+	"github.com/gokele/Outlook/internal/importer"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/orchestrator"
+	"github.com/gokele/Outlook/internal/scheduler"
+	"github.com/gokele/Outlook/internal/store"
 )
 
 // ---------- 导入 ----------

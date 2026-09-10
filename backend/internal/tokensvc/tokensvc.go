@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kele/outlook-console/internal/crypto"
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/oauth"
-	"github.com/kele/outlook-console/internal/store"
+	"github.com/gokele/Outlook/internal/crypto"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/oauth"
+	"github.com/gokele/Outlook/internal/store"
 )
 
 var (

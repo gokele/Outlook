@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/kele/outlook-console/internal/crypto"
+	"github.com/gokele/Outlook/internal/crypto"
 )
 
 // TestChangeUsernameNeedsCurrentPassword 校验改名必须验证当前密码。

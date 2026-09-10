@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 func mkGroup(t *testing.T, st *Store, name string, mode model.FailoverMode) int64 {

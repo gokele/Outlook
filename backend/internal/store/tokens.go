@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // LoadAccessToken 读取某账号在某 scope 下缓存的访问令牌。

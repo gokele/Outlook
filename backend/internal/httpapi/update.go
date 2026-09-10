@@ -12,7 +12,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/kele/outlook-console/internal/updater"
+	"github.com/gokele/Outlook/internal/updater"
 )
 
 // handleUpdateStatus 返回当前版本与可用的新版本。

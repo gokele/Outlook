@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/store"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/store"
 )
 
 // TestIDListAcceptsNumbersAndStrings 校验 ID 数组同时接受数字与字符串。

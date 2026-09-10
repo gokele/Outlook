@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 func mkLog(t *testing.T, st *Store, l *model.FetchLog) {

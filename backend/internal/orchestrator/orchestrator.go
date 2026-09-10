@@ -14,12 +14,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kele/outlook-console/internal/fetcher"
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/oauth"
-	"github.com/kele/outlook-console/internal/proxypool"
-	"github.com/kele/outlook-console/internal/store"
-	"github.com/kele/outlook-console/internal/tokensvc"
+	"github.com/gokele/Outlook/internal/fetcher"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/oauth"
+	"github.com/gokele/Outlook/internal/proxypool"
+	"github.com/gokele/Outlook/internal/store"
+	"github.com/gokele/Outlook/internal/tokensvc"
 )
 
 var (

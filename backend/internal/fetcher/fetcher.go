@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // Address 是一个邮件地址。

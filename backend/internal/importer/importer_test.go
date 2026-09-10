@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kele/outlook-console/internal/crypto"
-	"github.com/kele/outlook-console/internal/store"
-	"github.com/kele/outlook-console/internal/store/storetest"
+	"github.com/gokele/Outlook/internal/crypto"
+	"github.com/gokele/Outlook/internal/store"
+	"github.com/gokele/Outlook/internal/store/storetest"
 )
 
 const guid = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"

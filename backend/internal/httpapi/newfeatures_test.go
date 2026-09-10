@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kele/outlook-console/internal/fetcher"
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/store"
+	"github.com/gokele/Outlook/internal/fetcher"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/store"
 )
 
 // TestPatchCredentials 校验就地更新凭据：换授权码要连带重置状态与探测结果。

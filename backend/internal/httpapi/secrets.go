@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // secretsUnlockFor 是一次解锁的有效期。

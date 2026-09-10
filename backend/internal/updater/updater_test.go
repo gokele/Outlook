@@ -138,7 +138,7 @@ func TestApplyRejectsBadChecksum(t *testing.T) {
 // 必须真的能跑：applyTo 会在替换之前用 -version 试运行一次，
 // 拿纯文本冒充会被拦下 —— 而那正是这道检查该做的事。
 func fakeBinary(version string) []byte {
-	return []byte("#!/bin/sh\necho 'outlook-console api " + version + "'\n")
+	return []byte("#!/bin/sh\necho 'outlook api " + version + "'\n")
 }
 
 // TestApplyReplacesAndBacksUp 校验成功路径: 换上新内容, 旧的留一份。

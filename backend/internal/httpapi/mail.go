@@ -13,11 +13,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/kele/outlook-console/internal/fetcher"
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/orchestrator"
-	"github.com/kele/outlook-console/internal/store"
-	"github.com/kele/outlook-console/internal/tokensvc"
+	"github.com/gokele/Outlook/internal/fetcher"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/orchestrator"
+	"github.com/gokele/Outlook/internal/store"
+	"github.com/gokele/Outlook/internal/tokensvc"
 )
 
 // resolveAccount 按 email 或 account_id 定位账号，并做禁用、范围与租约检查。

@@ -18,11 +18,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kele/outlook-console/internal/crypto"
-	"github.com/kele/outlook-console/internal/fetcher"
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/oauth"
-	"github.com/kele/outlook-console/internal/store"
+	"github.com/gokele/Outlook/internal/crypto"
+	"github.com/gokele/Outlook/internal/fetcher"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/oauth"
+	"github.com/gokele/Outlook/internal/store"
 )
 
 // Binding 是一个账号本次出网要用的全套依赖。

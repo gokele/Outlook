@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/crypto"
-	"github.com/kele/outlook-console/internal/fetcher"
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/oauth"
-	"github.com/kele/outlook-console/internal/store"
-	"github.com/kele/outlook-console/internal/store/storetest"
-	"github.com/kele/outlook-console/internal/tokensvc"
+	"github.com/gokele/Outlook/internal/crypto"
+	"github.com/gokele/Outlook/internal/fetcher"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/oauth"
+	"github.com/gokele/Outlook/internal/store"
+	"github.com/gokele/Outlook/internal/store/storetest"
+	"github.com/gokele/Outlook/internal/tokensvc"
 )
 
 // stubFetcher 是一个不访问网络的假通道，用于统计真实拉取次数。

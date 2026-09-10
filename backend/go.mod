@@ -1,4 +1,4 @@
-module github.com/kele/outlook-console
+module github.com/gokele/Outlook
 
 go 1.26.0
 

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // fakeRT 是脚本化的 RoundTripper，记录请求并返回预置响应，不碰网络。

@@ -163,7 +163,7 @@ func TestPreflightAcceptsGoodBinary(t *testing.T) {
 	dir := t.TempDir()
 	good := filepath.Join(dir, "fake")
 	// 用一个 shell 脚本冒充：preflight 只关心"能执行且 -version 的输出含目标版本"。
-	script := "#!/bin/sh\necho 'outlook-console api v9.9.9'\n"
+	script := "#!/bin/sh\necho 'outlook api v9.9.9'\n"
 	if err := os.WriteFile(good, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

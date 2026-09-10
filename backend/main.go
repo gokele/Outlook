@@ -18,18 +18,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kele/outlook-console/internal/config"
-	"github.com/kele/outlook-console/internal/crypto"
-	"github.com/kele/outlook-console/internal/fetcher"
-	"github.com/kele/outlook-console/internal/httpapi"
-	"github.com/kele/outlook-console/internal/oauth"
-	"github.com/kele/outlook-console/internal/orchestrator"
-	"github.com/kele/outlook-console/internal/proxypool"
-	"github.com/kele/outlook-console/internal/scheduler"
-	"github.com/kele/outlook-console/internal/store"
-	"github.com/kele/outlook-console/internal/tokensvc"
-	"github.com/kele/outlook-console/internal/updater"
-	"github.com/kele/outlook-console/web"
+	"github.com/gokele/Outlook/internal/config"
+	"github.com/gokele/Outlook/internal/crypto"
+	"github.com/gokele/Outlook/internal/fetcher"
+	"github.com/gokele/Outlook/internal/httpapi"
+	"github.com/gokele/Outlook/internal/oauth"
+	"github.com/gokele/Outlook/internal/orchestrator"
+	"github.com/gokele/Outlook/internal/proxypool"
+	"github.com/gokele/Outlook/internal/scheduler"
+	"github.com/gokele/Outlook/internal/store"
+	"github.com/gokele/Outlook/internal/tokensvc"
+	"github.com/gokele/Outlook/internal/updater"
+	"github.com/gokele/Outlook/web"
 )
 
 // version 由构建时的 ldflags 注入：
@@ -49,7 +49,7 @@ func main() {
 	flag.Parse()
 
 	if *showVer {
-		fmt.Println("outlook-console api", version)
+		fmt.Println("outlook api", version)
 		return
 	}
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // rawDotted 的正文里有一行以点开头，用于验证多行响应的 ".." 还原。

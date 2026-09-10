@@ -3,8 +3,8 @@ package orchestrator
 import (
 	"testing"
 
-	"github.com/kele/outlook-console/internal/fetcher"
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/fetcher"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // TestParseFolders 校验文件夹参数解析。

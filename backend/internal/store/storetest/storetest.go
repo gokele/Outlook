@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kele/outlook-console/internal/store"
+	"github.com/gokele/Outlook/internal/store"
 )
 
 // EnvKey 是切换测试库的环境变量名。
@@ -85,6 +85,7 @@ func openPostgres(t *testing.T, dsn string) *store.Store {
 		_ = admin.Close()
 		t.Fatalf("打开测试 schema 失败: %v", err)
 	}
+	limitTestConns(st, admin)
 	t.Cleanup(func() {
 		_ = st.Close()
 		// 用例可能留下数据与外键，CASCADE 一次性收干净。
@@ -110,4 +111,19 @@ func randHex(n int) string {
 // IsPostgres 报告当前是否在跑 PostgreSQL，用于跳过只对某一方言有意义的断言。
 func IsPostgres() bool {
 	return strings.TrimSpace(os.Getenv(EnvKey)) != ""
+}
+
+// limitTestConns 把测试库的连接数压到很小。
+//
+// `go test ./...` 会并行跑多个包的测试二进制，每个都开一个连接池。生产默认的
+// 20 条连接乘上七八个包就超过了 PostgreSQL 默认的 100 连接上限，于是某个
+// 一次性开二十个并发的用例会随机拿到连接错误 —— 表现成"账号查不到"这种
+// 与真正原因毫无关系的样子，极难排查。
+//
+// 测试并不需要连接数，够用就行。
+func limitTestConns(sts ...*store.Store) {
+	for _, st := range sts {
+		st.DB().SetMaxOpenConns(4)
+		st.DB().SetMaxIdleConns(2)
+	}
 }

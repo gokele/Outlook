@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // RecordClientReq 记录一次针对某 client_id 的令牌请求，并在需要时滚动统计窗口。

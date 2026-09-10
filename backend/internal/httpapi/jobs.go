@@ -15,10 +15,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/kele/outlook-console/internal/jobs"
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/store"
-	"github.com/kele/outlook-console/internal/tokensvc"
+	"github.com/gokele/Outlook/internal/jobs"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/store"
+	"github.com/gokele/Outlook/internal/tokensvc"
 )
 
 // jobTypeVerify 是批量验证任务的类型名。

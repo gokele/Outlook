@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // RotateTask 是调度队列里的一条待轮换任务。

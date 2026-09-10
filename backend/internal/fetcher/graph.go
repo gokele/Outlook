@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 const (

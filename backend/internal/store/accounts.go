@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // ErrNotFound 表示目标记录不存在。

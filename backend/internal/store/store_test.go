@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/model"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // newTestStore 打开一个已完成迁移的测试库。
@@ -32,6 +32,20 @@ func newTestStore(t *testing.T) *Store {
 	if err := st.Migrate(context.Background()); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
+	return st
+}
+
+// newPreShardStore 打开一个停在"补完列、还没切分区"那一刻的库。
+//
+// 用来验证从旧版本升级上来的路径。SQLite 没有分区，全套迁移跑完就是这个状态。
+func newPreShardStore(t *testing.T) *Store {
+	t.Helper()
+	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
+	if dsn == "" {
+		return newTestStore(t)
+	}
+	st := newPostgresTestStore(t, dsn, false)
+	migrateUpTo(t, st, "036_backfill_shard_domain")
 	return st
 }
 
@@ -71,6 +85,12 @@ func newPostgresTestStore(t *testing.T, dsn string, migrate bool) *Store {
 		_, _ = admin.DB().ExecContext(ctx, "DROP SCHEMA "+schema+" CASCADE")
 		_ = admin.Close()
 	})
+	// 理由同 storetest.limitTestConns：并行跑多个包时，生产默认的池大小
+	// 乘上包数会撞穿 PostgreSQL 的连接上限，而症状与原因毫不相干。
+	for _, s := range []*Store{st, admin} {
+		s.DB().SetMaxOpenConns(4)
+		s.DB().SetMaxIdleConns(2)
+	}
 	if migrate {
 		if err := st.Migrate(ctx); err != nil {
 			t.Fatalf("迁移失败: %v", err)

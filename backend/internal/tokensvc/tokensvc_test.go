@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kele/outlook-console/internal/crypto"
-	"github.com/kele/outlook-console/internal/model"
-	"github.com/kele/outlook-console/internal/oauth"
-	"github.com/kele/outlook-console/internal/store"
-	"github.com/kele/outlook-console/internal/store/storetest"
+	"github.com/gokele/Outlook/internal/crypto"
+	"github.com/gokele/Outlook/internal/model"
+	"github.com/gokele/Outlook/internal/oauth"
+	"github.com/gokele/Outlook/internal/store"
+	"github.com/gokele/Outlook/internal/store/storetest"
 )
 
 const testGUID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
@@ -269,7 +269,14 @@ func TestConcurrentGetSingleRotation(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			a, _ := h.st.GetAccount(context.Background(), acc.ID)
+			// 取账号的错误不能吞掉。吞掉之后 a 是 nil，接下来直接空指针崩溃，
+			// 崩溃点离真正的原因十万八千里 —— 这个用例是全套里唯一一次性
+			// 开二十个连接的，连接不够时第一个倒下的就是它。
+			a, err := h.st.GetAccount(context.Background(), acc.ID)
+			if err != nil {
+				t.Errorf("取账号失败: %v", err)
+				return
+			}
 			_, _, _ = h.svc.Get(context.Background(), a, model.ChannelGraph)
 		}()
 	}

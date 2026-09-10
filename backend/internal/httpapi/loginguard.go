@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kele/outlook-console/internal/crypto"
+	"github.com/gokele/Outlook/internal/crypto"
 )
 
 // 登录防护。
