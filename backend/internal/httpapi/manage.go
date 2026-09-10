@@ -563,6 +563,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"channel_timeout_secs":  int(oc.ChannelTimeout / time.Second),
 		"fetch_limit":           oc.DefaultLimit,
 		"scheduler_enabled":     sc.Enabled,
+		"auto_rate":             sc.AutoRate,
 		"per_ip_per_min":        sc.PerIPPerMin,
 		"per_client_per_min":    sc.PerClientPerMin,
 		"concurrency":           sc.Concurrency,
@@ -634,6 +635,9 @@ func (s *Server) ApplySettings(m map[string]any) {
 	sc := s.sched.Config()
 	if v, ok := m["scheduler_enabled"].(bool); ok {
 		sc.Enabled = v
+	}
+	if v, ok := m["auto_rate"].(bool); ok {
+		sc.AutoRate = v
 	}
 	if n, ok := num("per_ip_per_min"); ok && n > 0 {
 		sc.PerIPPerMin = n

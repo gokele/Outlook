@@ -57,6 +57,9 @@ function fromFormValue(original: unknown, value: unknown): unknown {
  */
 export function SettingsForm({ settings, saving, onSave }: SettingsFormProps) {
   const [form] = Form.useForm();
+  // 订阅全部字段: 有些项由另一个开关接管, 开关一动它们要立刻置灰。
+  // 设置项只有十几个, 整表重渲染的代价可以忽略。
+  const values = Form.useWatch([], form);
 
   const keys = useMemo(() => Object.keys(settings), [settings]);
 
@@ -109,6 +112,9 @@ export function SettingsForm({ settings, saving, onSave }: SettingsFormProps) {
                 const meta = SETTING_FIELD_META[key];
                 const control = meta?.control ?? inferControl(settings[key]);
                 const wide = control === 'textarea';
+                const takenOver =
+                  meta?.disabledWhen !== undefined &&
+                  Boolean(values?.[meta.disabledWhen.key]) === meta.disabledWhen.is;
                 return (
                   <Col key={key} xs={24} md={wide ? 24 : 12} xl={wide ? 24 : 8}>
                     <Form.Item
@@ -124,14 +130,19 @@ export function SettingsForm({ settings, saving, onSave }: SettingsFormProps) {
                           </Typography.Text>
                         </Space>
                       }
-                      extra={meta?.help}
+                      extra={
+                        takenOver && meta?.disabledWhen
+                          ? `${meta.disabledWhen.note}, 当前不可编辑。${meta.help ?? ''}`
+                          : meta?.help
+                      }
                       valuePropName={control === 'switch' ? 'checked' : 'value'}
                       style={{ marginBottom: meta?.riskWhen ? 8 : undefined }}
                     >
                       {control === 'switch' ? (
-                        <Switch />
+                        <Switch disabled={takenOver} />
                       ) : control === 'number' ? (
                         <InputNumber
+                          disabled={takenOver}
                           min={meta?.min}
                           max={meta?.max}
                           // 单位用 suffix 而非已废弃的 addonAfter (antd v5 推荐 Space.Compact 或 suffix)

@@ -21,6 +21,13 @@ export function SchedulerHealthCard({ data }: SchedulerHealthProps) {
     first_verify_days: 0,
     healthy: true,
     advice: '',
+    auto_rate: false,
+    per_ip_per_min: 0,
+    per_client_per_min: 0,
+    need_ips: 0,
+    need_clients: 0,
+    have_ips: 0,
+    have_clients: 0,
   };
 
   const steady = scheduler.steady_rate_per_day ?? 0;
@@ -29,6 +36,11 @@ export function SchedulerHealthCard({ data }: SchedulerHealthProps) {
   const unhealthy = scheduler.healthy === false;
   // 负载分档: 低于 70% 正常, 70%-100% 需要关注, 超过 100% 表示排不过来
   const loadColor = load > 100 ? '#ff4d4f' : load >= 70 ? '#fa8c16' : '#52c41a';
+  // 资源缺口: 后端按安全上限反推出的需求量减去现有量。
+  // 速率顶到上限后再往上调就是送去封号, 唯一的出路是加资源, 所以这两个数要显眼。
+  const missingIPs = Math.max((scheduler.need_ips ?? 0) - (scheduler.have_ips ?? 0), 0);
+  const missingClients = Math.max((scheduler.need_clients ?? 0) - (scheduler.have_clients ?? 0), 0);
+  const shortOfResources = missingIPs > 0 || missingClients > 0;
 
   return (
     <Card
@@ -117,6 +129,39 @@ export function SchedulerHealthCard({ data }: SchedulerHealthProps) {
               </Tooltip>
             </Col>
           </Row>
+        ) : null}
+
+        {/*
+          生效速率与资源缺口。自适应打开后设置页显示的是手填值而不是推导值,
+          「实际在用多少」只有这里看得到。
+        */}
+        <Flex justify="space-between" align="center" gap={8} wrap>
+          <Typography.Text type="secondary">
+            {scheduler.auto_rate ? '自适应速率' : '手工速率'} · 单出口{' '}
+            {scheduler.per_ip_per_min ?? 0} 次/分钟 · 单应用 {scheduler.per_client_per_min ?? 0}{' '}
+            次/分钟
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            现有 {scheduler.have_ips ?? 0} 个出口 · {scheduler.have_clients ?? 0} 个应用注册
+          </Typography.Text>
+        </Flex>
+
+        {shortOfResources ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="资源不足, 速率已顶到安全上限"
+            description={
+              <>
+                按当前账号规模, 还需要
+                {missingIPs > 0 ? ` ${missingIPs} 个出口 IP` : ''}
+                {missingIPs > 0 && missingClients > 0 ? ' 与' : ''}
+                {missingClients > 0 ? ` ${missingClients} 个应用注册` : ''}
+                （目标 {scheduler.need_ips ?? 0} 个出口 / {scheduler.need_clients ?? 0} 个应用）。
+                这一项不能靠调高速率解决 —— 上限之上就是风控。
+              </>
+            }
+          />
         ) : null}
 
         <div>

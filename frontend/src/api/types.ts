@@ -129,6 +129,16 @@ export interface SchedulerHealth {
   healthy: boolean;
   /** 不健康时的针对性建议 */
   advice: string;
+  /** 速率是自动推导的还是手填的 */
+  auto_rate: boolean;
+  /** 本次生效的速率上限, 自适应时为推导值 */
+  per_ip_per_min: number;
+  per_client_per_min: number;
+  /** 按安全上限反推出的资源需求量, 与 have_* 的差额就是要补的数量 */
+  need_ips: number;
+  need_clients: number;
+  have_ips: number;
+  have_clients: number;
 }
 
 /** 被熔断的 client_id 及其恢复时间 */

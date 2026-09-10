@@ -30,6 +30,12 @@ type Config struct {
 	// PerIPPerMin 是单个出口 IP 每分钟的令牌请求上限。
 	// 同一 IP 为大量不同账号请求令牌，形态接近撞库，这是最需要节制的维度。
 	PerIPPerMin int
+	// AutoRate 为真时，PerIPPerMin 与 PerClientPerMin 由账号规模与可用资源
+	// 自动推导，手工设定值被忽略。见 autorate.go。
+	//
+	// 默认打开：手工填这两个值在小规模时无伤大雅，规模一上来就必然填错 ——
+	// 十万账号和十亿账号需要的速率差四个数量级。
+	AutoRate bool
 	// PerClientPerMin 是单个 client_id 每分钟的上限。
 	// 微软的限流有一部分按应用维度计算，账号池常共用少数 client_id，
 	// 这一条通常是实际瓶颈。
@@ -55,6 +61,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Enabled:         true,
+		AutoRate:        true,
 		PerIPPerMin:     10,
 		PerClientPerMin: 6,
 		Concurrency:     5,
@@ -96,6 +103,12 @@ type Scheduler struct {
 	// lastRun 与 lastCount 供总览页展示实际速率。
 	lastRun   time.Time
 	lastCount int
+
+	// 自适应速率的推导结果缓存，见 Effective。
+	rateMu   sync.Mutex
+	rateAt   time.Time
+	rateVal  DerivedRates
+	rateHave bool
 }
 
 // New 构造调度器。
@@ -188,6 +201,10 @@ func (s *Scheduler) RunOnce(ctx context.Context) (int, error) {
 	includeP3 := s.p3Credit >= 1
 	s.mu.Unlock()
 
+	// 逐个 client_id 与逐个出口的过滤要用同一份生效配置，
+	// 否则总量按自适应算、分摊却按手工值过滤，两者会打架。
+	cfg = s.Effective(cfg)
+
 	tasks, err := s.st.ClaimRotateTasks(ctx, quota, suspended, includeP3)
 	if err != nil {
 		return 0, err
@@ -247,13 +264,75 @@ func (s *Scheduler) quota(st store.QueueStats, cfg Config) int {
 	return want
 }
 
-// MaxRatePerMin 返回速率上限，取三条硬约束的最小值。
+// MaxRatePerMin 返回本轮允许的总速率。
 func (s *Scheduler) MaxRatePerMin(cfg Config) int {
-	byIP := cfg.PerIPPerMin * maxInt(s.egressIPs(cfg), 1)
+	byIP := s.Effective(cfg).PerIPPerMin * maxInt(s.egressIPs(cfg), 1)
 	if byIP < 1 {
 		byIP = 1
 	}
 	return byIP
+}
+
+// rateRefresh 是自适应速率的重算间隔。
+//
+// 不每个 tick 都重算，是因为推导要数账号总数，而 COUNT(*) 在大表上是全表扫描：
+// 千万行还只是几百毫秒，十亿行就是分钟级 —— 每分钟算一次会把调度器整个卡死在
+// 计数上。而这个数字本身不需要那么新鲜：速率跟的是账号规模，规模不会在五分钟内
+// 变一个数量级，导入十万个账号也只是让下一次重算把速率往上抬一档。
+const rateRefresh = 5 * time.Minute
+
+// rateCountTimeout 是一次重算允许花的时间。
+//
+// 超时不是错误处理的边角料，而是这里的主要设计：计数慢的时候必须让调度继续跑，
+// 而不是陪着它一起卡住。超时就沿用上一次的推导结果。
+const rateCountTimeout = 15 * time.Second
+
+// Effective 返回本次生效的速率配置。
+// 打开自适应时用推导值，否则用手工设定值。
+func (s *Scheduler) Effective(cfg Config) Config {
+	if !cfg.AutoRate {
+		return cfg
+	}
+	d, ok := s.derive(cfg)
+	if !ok {
+		return cfg
+	}
+	out := cfg
+	out.PerIPPerMin = d.PerIPPerMin
+	out.PerClientPerMin = d.PerClientPerMin
+	return out
+}
+
+// derive 取推导结果，必要时重算。第二个返回值为假表示还没有可用的推导值
+// （首次重算就失败），此时调用方应当回落到手工设定值。
+func (s *Scheduler) derive(cfg Config) (DerivedRates, bool) {
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+	if s.rateHave && time.Since(s.rateAt) < rateRefresh {
+		return s.rateVal, true
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), rateCountTimeout)
+	defer cancel()
+	accounts, err := s.st.CountAccounts(ctx)
+	if err != nil || accounts <= 0 {
+		// 沿用上一次的结果。计数超时或库不可用时把速率退回手工值，
+		// 等于在最不该改速率的时刻改速率。
+		return s.rateVal, s.rateHave
+	}
+	clients, err := s.st.CountDistinctClientIDs(ctx)
+	if err != nil {
+		clients = 1
+	}
+	days := 60
+	if s.ts != nil {
+		days = int(s.ts.RotateAfter() / (24 * time.Hour))
+	}
+
+	s.rateVal = DeriveRates(accounts, days, s.egressIPs(cfg), clients)
+	s.rateAt = time.Now()
+	s.rateHave = true
+	return s.rateVal, true
 }
 
 // egressIPs 返回实际出口数。
@@ -476,6 +555,18 @@ type Health struct {
 	FirstExpiryAt  int64  `json:"first_expiry_at"`
 	// FirstVerifyPerDay 是首验队列每天能处理多少个。
 	FirstVerifyPerDay int `json:"first_verify_per_day"`
+	// AutoRate 说明速率是自动推导的还是手工设定的。
+	AutoRate bool `json:"auto_rate"`
+	// PerIPPerMin 与 PerClientPerMin 是本次生效的速率，自适应时为推导值。
+	PerIPPerMin     int `json:"per_ip_per_min"`
+	PerClientPerMin int `json:"per_client_per_min"`
+	// NeedIPs 与 NeedClients 是按安全上限反推出的资源需求量。
+	// 现有资源够用时它们不大于当前拥有量，不够时差额就是要补的数量。
+	NeedIPs     int `json:"need_ips"`
+	NeedClients int `json:"need_clients"`
+	// HaveIPs 与 HaveClients 是当前实际拥有的数量，供界面直接对比。
+	HaveIPs     int `json:"have_ips"`
+	HaveClients int `json:"have_clients"`
 	// FirstVerifyDays 是按当前速率把未验证账号全部验完还需要多少天。
 	//
 	// 这一项此前完全没算过，而它是最容易出问题的地方：轮换容量按账号数
@@ -513,8 +604,18 @@ func (s *Scheduler) CheckHealth(ctx context.Context) (Health, error) {
 	h.RotateAfterDay = days
 	h.SteadyPerDay = int(math.Ceil(float64(total) / float64(days)))
 
-	byIP := cfg.PerIPPerMin * maxInt(s.egressIPs(cfg), 1) * 1440
-	byClient := cfg.PerClientPerMin * maxInt(clients, 1) * 1440
+	// 自检必须用生效值而不是手工设定值，否则打开自适应后它算的是另一套数。
+	eff := s.Effective(cfg)
+	ips := maxInt(s.egressIPs(cfg), 1)
+	h.AutoRate = cfg.AutoRate
+	h.PerIPPerMin, h.PerClientPerMin = eff.PerIPPerMin, eff.PerClientPerMin
+	h.HaveIPs, h.HaveClients = ips, maxInt(clients, 1)
+
+	derived := DeriveRates(total, days, ips, maxInt(clients, 1))
+	h.NeedIPs, h.NeedClients = derived.NeedIPs, derived.NeedClients
+
+	byIP := eff.PerIPPerMin * ips * 1440
+	byClient := eff.PerClientPerMin * maxInt(clients, 1) * 1440
 	h.MaxPerDay = minInt(byIP, byClient)
 
 	// 首验单独算。它与轮换是两回事：轮换的需求按账号数除以阈值天数摊开，
@@ -524,7 +625,7 @@ func (s *Scheduler) CheckHealth(ctx context.Context) (Health, error) {
 
 	// 调度器关闭时一律不健康：闲置账号会在 90 天后失效，无论容量多充足。
 	h.Healthy = cfg.Enabled && h.MaxPerDay >= int(float64(h.SteadyPerDay)*1.5) &&
-		stats.P0 == 0 && !firstVerifyLate
+		stats.P0 == 0 && !firstVerifyLate && derived.Feasible
 
 	// 关闭时算出第一个账号预计失效的日期，让代价可见。
 	if !cfg.Enabled {
@@ -535,6 +636,14 @@ func (s *Scheduler) CheckHealth(ctx context.Context) (Health, error) {
 	switch {
 	case !cfg.Enabled:
 		h.Advice = "调度器已关闭。闲置账号将在 90 天后失效，建议开启。"
+	case !derived.Feasible:
+		h.Advice = fmt.Sprintf(
+			"速率已顶到安全上限，现有资源撑不住 %d 个账号。"+
+				"按每分钟的稳态需求 %.0f 次推算，需要 %d 个出口 IP（现有 %d）"+
+				"与 %d 个应用注册（现有 %d）。"+
+				"继续加账号只会让一部分在 90 天窗口内轮不到，而不是变慢 —— "+
+				"再往上调速率就是在给微软送封号理由。",
+			total, derived.DemandPerMin, h.NeedIPs, h.HaveIPs, h.NeedClients, h.HaveClients)
 	case stats.P0 > 0:
 		h.Advice = "存在距硬到期不足 7 天的账号，调度已跟不上。请提高速率上限或增加出口代理。"
 	case firstVerifyLate:
