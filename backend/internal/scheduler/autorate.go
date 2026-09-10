@@ -65,7 +65,10 @@ type DerivedRates struct {
 //
 // accounts 是需要轮换的账号数，rotateDays 是轮换阈值，
 // ips 与 clients 分别是可用的出口 IP 数与 client_id 数。
-func DeriveRates(accounts, rotateDays, ips, clients int) DerivedRates {
+//
+// accounts 用 int64 而不是 int：这个系统的目标规模是十亿，
+// 而 int 在 32 位平台上只有 21 亿的余量 —— 留着这种擦边不值当。
+func DeriveRates(accounts int64, rotateDays, ips, clients int) DerivedRates {
 	if rotateDays <= 0 {
 		rotateDays = 60
 	}

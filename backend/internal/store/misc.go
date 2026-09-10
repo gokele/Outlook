@@ -467,15 +467,12 @@ func (s *Store) SessionSecretsUntil(ctx context.Context, token string) (int64, e
 
 // ListAccountDomains 列出账号池里出现过的邮箱域名及各自数量。
 //
-// 域名切分放在 SQL 里做而不是取回全部邮箱在 Go 里算：几万个账号全捞回来
-// 只为数一下后缀，代价完全不成比例。两种数据库的字符串函数不同，在此分开写。
+// 直接对 domain 列聚合。原来是在 SQL 里现切邮箱后缀再 GROUP BY，
+// 那是个必然的全表扫描加排序，而且两种数据库的字符串函数还不一样，得写两份。
+// 存成一列之后聚合走 idx_accounts_domain，两边共用同一条语句。
 func (s *Store) ListAccountDomains(ctx context.Context) ([]DomainCount, error) {
-	expr := `substr(email, instr(email, '@') + 1)`
-	if s.dialect == Postgres {
-		expr = `split_part(email, '@', 2)`
-	}
 	rows, err := s.query(ctx,
-		`SELECT `+expr+` AS d, COUNT(*) FROM accounts GROUP BY d ORDER BY COUNT(*) DESC`)
+		`SELECT domain, COUNT(*) FROM accounts WHERE domain <> '' GROUP BY domain ORDER BY COUNT(*) DESC`)
 	if err != nil {
 		return nil, err
 	}

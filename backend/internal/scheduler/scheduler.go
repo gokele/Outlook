@@ -314,8 +314,8 @@ func (s *Scheduler) derive(cfg Config) (DerivedRates, bool) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), rateCountTimeout)
 	defer cancel()
-	accounts, err := s.st.CountAccounts(ctx)
-	if err != nil || accounts <= 0 {
+	accounts, _ := s.st.CountAccountsApprox(ctx)
+	if accounts <= 0 {
 		// 沿用上一次的结果。计数超时或库不可用时把速率退回手工值，
 		// 等于在最不该改速率的时刻改速率。
 		return s.rateVal, s.rateHave
@@ -588,10 +588,9 @@ func (s *Scheduler) CheckHealth(ctx context.Context) (Health, error) {
 	}
 	h.QueueStats = stats
 
-	total, err := s.st.CountAccounts(ctx)
-	if err != nil {
-		return h, err
-	}
+	// 用估计值而不是 COUNT(*)：容量自检挂在总览页上，每次打开都会跑，
+	// 而它要回答的是"容量够不够"这种量级问题，不需要精确到个位。
+	total, _ := s.st.CountAccountsApprox(ctx)
 	clients, err := s.st.CountDistinctClientIDs(ctx)
 	if err != nil {
 		return h, err

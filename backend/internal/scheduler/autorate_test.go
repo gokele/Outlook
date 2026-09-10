@@ -20,7 +20,7 @@ func TestDeriveRatesScalesDown(t *testing.T) {
 
 // 速率不能为 0：那意味着调度器完全不工作，账号会一直等到过期。
 func TestDeriveRatesNeverZero(t *testing.T) {
-	for _, n := range []int{0, 1, 10} {
+	for _, n := range []int64{0, 1, 10} {
 		d := DeriveRates(n, 60, 1, 1)
 		if d.PerIPPerMin < 1 || d.PerClientPerMin < 1 {
 			t.Fatalf("账号数 %d 推出速率 %d/%d，不能低于 1", n, d.PerIPPerMin, d.PerClientPerMin)

@@ -150,7 +150,15 @@ export interface SuspendedClient {
 /** 总览统计 */
 export interface Overview {
   total: number;
+  /**
+   * total 是否为准确值。
+   * 账号数上了规模之后总数改用数据库的行数估计, 误差几个百分点 ——
+   * 为了几位精度在十亿行上跑一次 COUNT(*) 要二十多分钟, 页面直接超时。
+   */
+  total_exact: boolean;
   by_status: Record<AccountStatus, number>;
+  /** 分状态计数是否已在上限处截断, 为真时各项都是"至少这么多" */
+  by_status_capped: boolean;
   by_category: Array<{ id: number | string; name: string; count: number }>;
   fetch_7d: { ok: number; fail: number };
   /**

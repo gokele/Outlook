@@ -64,8 +64,14 @@ func (s *Store) GetAccount(ctx context.Context, id int64) (*model.Account, error
 }
 
 // GetAccountByEmail 按规范化后的邮箱取账号。
+//
+// 查询条件里带上 shard 不是多余的：分片号由邮箱算出，带上它 PostgreSQL 就能
+// 把查询裁剪到 64 分之一的数据上，并直接命中 (shard, email) 唯一索引。
+// 取件 API 按邮箱找账号是全系统最热的路径，这一步省下的是每次请求的钱。
 func (s *Store) GetAccountByEmail(ctx context.Context, email string) (*model.Account, error) {
-	row := s.queryRow(ctx, `SELECT `+accountCols+` FROM accounts a WHERE a.email = ?`, NormalizeEmail(email))
+	norm := NormalizeEmail(email)
+	row := s.queryRow(ctx, `SELECT `+accountCols+` FROM accounts a WHERE a.shard = ? AND a.email = ?`,
+		ShardOf(norm), norm)
 	a, err := scanAccount(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -93,9 +99,17 @@ func (f AccountFilter) where() (string, []any) {
 	var cond []string
 	var args []any
 	if f.Q != "" {
-		cond = append(cond, "(a.email LIKE ? OR a.note LIKE ?)")
-		like := "%" + f.Q + "%"
-		args = append(args, like, like)
+		// 搜索框里粘一个完整邮箱是最常见的用法，而 LIKE '%...%' 两头通配
+		// 谁也帮不了，只能全表扫描。看出是完整邮箱就退化成等值查询，
+		// 顺带带上分片号裁剪分区 —— 十亿行上这是"秒回"和"查不动"的分界。
+		if e := NormalizeEmail(f.Q); looksLikeEmail(e) {
+			cond = append(cond, "a.shard = ? AND a.email = ?")
+			args = append(args, ShardOf(e), e)
+		} else {
+			cond = append(cond, "(a.email LIKE ? OR a.note LIKE ?)")
+			like := "%" + f.Q + "%"
+			args = append(args, like, like)
+		}
 	}
 	if f.CategoryID != nil {
 		cond = append(cond, "a.category_id = ?")
@@ -119,10 +133,11 @@ func (f AccountFilter) where() (string, []any) {
 		args = append(args, f.Tag)
 	}
 	if d := strings.ToLower(strings.TrimSpace(f.Domain)); d != "" {
-		// 用 LIKE '%@domain' 而不是在 SQL 里切字符串：两种数据库的字符串函数不同，
-		// 而且切出来的表达式用不上索引，LIKE 的前缀通配同样用不上但至少写法统一。
-		cond = append(cond, "a.email LIKE ?")
-		args = append(args, "%@"+d)
+		// 域名单独存了一列，等值匹配直接走 idx_accounts_domain。
+		// 原来写的是 email LIKE '%@outlook.com'，前缀通配用不上任何索引，
+		// 十万账号时是 9 毫秒，十亿账号时是几十分钟。
+		cond = append(cond, "a.domain = ?")
+		args = append(args, d)
 	}
 	if len(f.IDs) > 0 {
 		cond = append(cond, "a.id IN ("+placeholders(len(f.IDs))+")")
@@ -136,12 +151,26 @@ func (f AccountFilter) where() (string, []any) {
 	return " WHERE " + strings.Join(cond, " AND "), args
 }
 
+// MaxListTotal 是列表接口最多数到的条数。
+//
+// total 等于这个值表示"至少这么多"，界面应显示成 10 万+ 而不是精确值。
+// 列表的 COUNT(*) 是十亿规模下另一处不设防的全表扫描 —— 而分页只需要知道
+// "还有没有下一页"，翻到第两千页之后的准确总数，没有任何人在看。
+const MaxListTotal = exactCountMax
+
 // ListAccounts 分页列出账号，并填充分类名、标签与租约信息。
+//
+// total 封顶在 MaxListTotal，页码也随之封顶：允许翻到一亿条之后的位置，
+// 意味着数据库要先跳过一亿行才能开始输出，那是把慢查询做成了一个按钮。
 func (s *Store) ListAccounts(ctx context.Context, f AccountFilter) ([]*model.Account, int, error) {
 	w, args := f.where()
 
-	var total int
-	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM accounts a`+w, args...).Scan(&total); err != nil {
+	where := "1=1"
+	if w != "" {
+		where = strings.TrimPrefix(w, " WHERE ")
+	}
+	total, _, err := s.countUpToAliased(ctx, MaxListTotal, where, args...)
+	if err != nil {
 		return nil, 0, err
 	}
 
@@ -150,6 +179,9 @@ func (s *Store) ListAccounts(ctx context.Context, f AccountFilter) ([]*model.Acc
 	}
 	if f.Page <= 0 {
 		f.Page = 1
+	}
+	if max := (MaxListTotal / f.Size) + 1; f.Page > max {
+		f.Page = max
 	}
 	q := `SELECT ` + accountCols + `, c.name, COALESCE(l.expires_at, 0)
 	      FROM accounts a
@@ -243,15 +275,20 @@ func (s *Store) fillTags(ctx context.Context, accs []*model.Account, ids []int64
 // InsertAccount 新增账号，返回自增 ID。
 func (s *Store) InsertAccount(ctx context.Context, a *model.Account) (int64, error) {
 	caps, _ := json.Marshal(a.Capabilities)
+	email := NormalizeEmail(a.Email)
+	// shard 与 domain 都是从邮箱算出来的派生列，只在写入时算一次。
+	// PostgreSQL 上 shard 是分区键，不给值会直接插不进去 —— 这是故意的：
+	// 少写一个分片号意味着这行账号找不到归属，宁可当场报错也不要落到某个兜底分区里。
 	q := `INSERT INTO accounts (email, password_enc, client_id, refresh_token_enc, tenant,
 	       capabilities, channel_policy, category_id, note, status, token_refreshed_at,
 	       token_expires_at, next_rotate_at, rotate_fail_count, last_fetch_at, last_error,
-	       disabled, created_at, recovery_email, recovery_password_enc)
-	      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-	args := []any{NormalizeEmail(a.Email), a.PasswordEnc, a.ClientID, a.RefreshTokenEnc, a.Tenant,
+	       disabled, created_at, recovery_email, recovery_password_enc, shard, domain)
+	      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	args := []any{email, a.PasswordEnc, a.ClientID, a.RefreshTokenEnc, a.Tenant,
 		string(caps), a.ChannelPolicy, a.CategoryID, a.Note, a.Status, a.TokenRefreshedAt,
 		a.TokenExpiresAt, a.NextRotateAt, a.RotateFailCount, a.LastFetchAt, a.LastError,
-		boolInt(a.Disabled), a.CreatedAt, a.RecoveryEmail, a.RecoveryPasswordEnc}
+		boolInt(a.Disabled), a.CreatedAt, a.RecoveryEmail, a.RecoveryPasswordEnc,
+		ShardOf(email), DomainOf(email)}
 	return s.insertReturningID(ctx, q, args...)
 }
 
@@ -423,29 +460,90 @@ func (s *Store) SetLastError(ctx context.Context, id int64, msg string) error {
 }
 
 // CountAccounts 返回未禁用且未失效的账号总数，供调度器计算稳态速率。
+//
+// 这是一次真实的 COUNT(*)，代价与表规模成正比。上了规模就该用
+// CountAccountsApprox —— 这个函数留给确实需要准确值、且已知表不大的地方。
 func (s *Store) CountAccounts(ctx context.Context) (int, error) {
 	var n int
 	err := s.queryRow(ctx, `SELECT COUNT(*) FROM accounts WHERE disabled = 0 AND status <> 'INVALID'`).Scan(&n)
 	return n, err
 }
 
-// StatusCounts 返回各状态的账号数，供总览页使用。
-func (s *Store) StatusCounts(ctx context.Context) (map[string]int, error) {
-	rows, err := s.query(ctx, `SELECT status, COUNT(*) FROM accounts GROUP BY status`)
+// exactCountMax 是"还值得数准"的行数上限。
+//
+// 十万以内数一遍是几十毫秒，用户导入一百个账号就该看到一百，
+// 给个约数反而像出了错。超过之后准确值既数不动也没人真的在意那几位。
+const exactCountMax = 100000
+
+// CountAccountsApprox 返回账号总数，第二个返回值说明它准不准。
+//
+// 先用统计信息估一个数：小表就老老实实数一遍，大表用 PostgreSQL 自己维护的
+// 行数估计（autovacuum 持续更新，误差通常在百分之几）。
+//
+// 之所以敢用估计值：它的唯一用途是推导速率，而速率还要被安全上限截断，
+// 差百分之几改变不了任何决策。反过来，为了这几位精度在十亿行上跑一次
+// COUNT(*) 要二十多分钟，那才是真正的问题。
+//
+// 估计值统计的是全表行数，含已禁用与已失效的账号，因此偏大。偏大的方向是
+// 速率算得更靠近上限一些，也就是回到自适应之前的行为，不会突破安全线。
+func (s *Store) CountAccountsApprox(ctx context.Context) (int64, bool) {
+	if est, ok := s.estimateAccountRows(ctx); ok && est > exactCountMax {
+		return est, false
+	}
+	n, err := s.CountAccounts(ctx)
 	if err != nil {
-		return nil, err
+		return 0, false
 	}
-	defer rows.Close()
+	return int64(n), true
+}
+
+// estimateAccountRows 从 PostgreSQL 的统计信息里读账号表的估计行数。
+//
+// 分区表的父表自己不存数据，reltuples 恒为 0，必须把各分区加起来。
+// SQLite 没有等价物，也不需要 —— 它是小规模形态，直接数就是了。
+func (s *Store) estimateAccountRows(ctx context.Context) (int64, bool) {
+	if s.dialect != Postgres {
+		return 0, false
+	}
+	var est float64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(c.reltuples), 0)
+		FROM pg_class c
+		JOIN pg_inherits i ON i.inhrelid = c.oid
+		WHERE i.inhparent = to_regclass('accounts')`).Scan(&est)
+	if err == nil && est > 0 {
+		return int64(est), true
+	}
+	// 没分区（或还没 ANALYZE 过）时退回读父表自己的估计值。
+	err = s.db.QueryRowContext(ctx,
+		`SELECT reltuples FROM pg_class WHERE oid = to_regclass('accounts')`).Scan(&est)
+	if err != nil || est < 0 {
+		return 0, false // reltuples 为 -1 表示从未统计过
+	}
+	return int64(est), true
+}
+
+// StatusCounts 返回各状态的账号数，供总览页使用。
+// 第二个返回值为真表示某个状态数到上限就停了，真实值只多不少。
+//
+// 逐个状态数而不是 GROUP BY status：分组要把整张表（或整个 status 索引）
+// 走一遍才知道结果，十亿行上是分钟级；而状态只有五个，逐个数每个都能
+// 沿着索引在够数时立刻停下。多跑四条查询换来的是代价上限固定。
+func (s *Store) StatusCounts(ctx context.Context) (map[string]int, bool, error) {
 	out := map[string]int{}
-	for rows.Next() {
-		var k string
-		var v int
-		if err := rows.Scan(&k, &v); err != nil {
-			return nil, err
+	capped := false
+	for _, st := range []model.AccountStatus{
+		model.StatusUnverified, model.StatusActive, model.StatusExpiring,
+		model.StatusInvalid, model.StatusBanned,
+	} {
+		n, hit, err := s.countUpTo(ctx, exactCountMax, `status = ?`, string(st))
+		if err != nil {
+			return nil, false, err
 		}
-		out[k] = v
+		out[string(st)] = n
+		capped = capped || hit
 	}
-	return out, rows.Err()
+	return out, capped, nil
 }
 
 // NormalizeEmail 规范化邮箱：去首尾空白、全角转半角、统一小写。

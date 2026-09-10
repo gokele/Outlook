@@ -22,7 +22,7 @@ import (
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	if dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL")); dsn != "" {
-		return newPostgresTestStore(t, dsn)
+		return newPostgresTestStore(t, dsn, true)
 	}
 	st, err := Open("sqlite://" + filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -36,7 +36,10 @@ func newTestStore(t *testing.T) *Store {
 }
 
 // newPostgresTestStore 为单个用例建独立 schema, 结束时整个删掉。
-func newPostgresTestStore(t *testing.T, dsn string) *Store {
+//
+// migrate 为假时只建 schema 不跑迁移, 留给需要自己控制迁移进度的用例 ——
+// 比如要验证"从一张已有数据的普通表切成分区表"这条升级路径。
+func newPostgresTestStore(t *testing.T, dsn string, migrate bool) *Store {
 	t.Helper()
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
@@ -68,8 +71,10 @@ func newPostgresTestStore(t *testing.T, dsn string) *Store {
 		_, _ = admin.DB().ExecContext(ctx, "DROP SCHEMA "+schema+" CASCADE")
 		_ = admin.Close()
 	})
-	if err := st.Migrate(ctx); err != nil {
-		t.Fatalf("迁移失败: %v", err)
+	if migrate {
+		if err := st.Migrate(ctx); err != nil {
+			t.Fatalf("迁移失败: %v", err)
+		}
 	}
 	return st
 }

@@ -1,0 +1,86 @@
+# 测试。推代码与提 PR 时跑，不参与发布 —— 发布走 release.yml，
+# 由标签触发，这里失败不会挡住发版。
+#
+# 为什么一定要在 CI 上跑 PostgreSQL：本地开发用的是 SQLite，而两者并不等价。
+# 取任务的 FOR UPDATE SKIP LOCKED 在 SQLite 上根本不存在，账号表的分区
+# （accounts 按 shard 切成 64 个 LIST 分区）也是 PostgreSQL 独有的 ——
+# 分区键、唯一约束、序列续号这些只有在真实 PostgreSQL 上跑过才算验证过。
+# 只跑 SQLite 的绿灯说明不了生产没问题。
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: 后端测试
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: outlook_test
+        ports: ['5432:5432']
+        # 没有健康检查的话，测试会在数据库还没起来的时候就开始连。
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: go vet
+        working-directory: backend
+        run: go vet ./...
+
+      # 先跑 SQLite：本地开发与小规模部署就是这个形态，它必须一直是绿的。
+      - name: 测试 (SQLite)
+        working-directory: backend
+        run: go test ./...
+
+      # 再跑 PostgreSQL：每个用例一个独立 schema，用完即删，可以并行。
+      - name: 测试 (PostgreSQL)
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/outlook_test?sslmode=disable
+        run: go test -count=1 ./...
+
+  frontend:
+    name: 前端检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 类型检查
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: 代码检查
+        working-directory: frontend
+        run: npm run lint
+
+      - name: 构建
+        working-directory: frontend
+        run: npm run build

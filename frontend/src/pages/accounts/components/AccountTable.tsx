@@ -1,7 +1,7 @@
 import { Table, Grid } from 'antd';
 import type { TableRowSelection } from 'antd/es/table/interface';
 import type { Account } from '@/api/types';
-import { PAGE_SIZE_OPTIONS } from '@/constants/account';
+import { MAX_LIST_TOTAL, PAGE_SIZE_OPTIONS } from '@/constants/account';
 import type { AccountRowActions } from './columns';
 import { COLUMN_BUDGET, RESERVED_WIDTH } from './columns';
 import { useVisibleColumns } from '../hooks/useVisibleColumns';
@@ -60,7 +60,11 @@ export function AccountTable({
         total,
         showSizeChanger: true,
         pageSizeOptions: PAGE_SIZE_OPTIONS,
-        showTotal: (count) => `共 ${count} 个账号`,
+        // 后端的总数封顶在 10 万: 分页只需要知道还有没有下一页,
+        // 而在十亿行上数准总数是一次全表扫描。撞到封顶时如实显示成 "10 万+",
+        // 不把一个下限当成精确数字给人看。
+        showTotal: (count) =>
+          count >= MAX_LIST_TOTAL ? `共 ${count.toLocaleString()}+ 个账号` : `共 ${count} 个账号`,
         onChange: onPageChange,
       }}
       />

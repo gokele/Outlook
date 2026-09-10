@@ -94,3 +94,11 @@ export const DEFAULT_PAGE_SIZE = 20;
 
 /** 可选分页大小 */
 export const PAGE_SIZE_OPTIONS = ['20', '50', '100'];
+
+/**
+ * 列表接口最多数到的条数, 与后端 store.MaxListTotal 一致。
+ *
+ * total 等于这个值表示"至少这么多": 分页只需要知道还有没有下一页,
+ * 而在十亿行上数准总数是一次全表扫描。两边改动要一起改。
+ */
+export const MAX_LIST_TOTAL = 100000;

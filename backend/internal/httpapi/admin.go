@@ -300,15 +300,15 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 // handleOverview 汇总总览页所需的全部指标。
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	byStatus, err := s.st.StatusCounts(ctx)
+	byStatus, statusCapped, err := s.st.StatusCounts(ctx)
 	if err != nil {
 		writeError(w, r, err, s.log)
 		return
 	}
-	total := 0
-	for _, v := range byStatus {
-		total += v
-	}
+	// 总数单独取，不由各状态相加得来：分状态的计数会在上限处截断，
+	// 加起来就成了一个偏小又说不清的数。总数用统计信息估，误差几个百分点，
+	// 但它至少是"这个池子有多大"的诚实回答。
+	total, totalExact := s.st.CountAccountsApprox(ctx)
 	cats, _ := s.st.ListCategories(ctx)
 	weekAgo := time.Now().AddDate(0, 0, -7).Unix()
 	fetch7d, _ := s.st.FetchStatsSince(ctx, weekAgo)
@@ -329,7 +329,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, r, map[string]any{
 		"total":             total,
+		"total_exact":       totalExact,
 		"by_status":         byStatus,
+		"by_status_capped":  statusCapped,
 		"by_category":       cats,
 		"fetch_7d":          fetch7d,
 		"code_7d":           codeStats,

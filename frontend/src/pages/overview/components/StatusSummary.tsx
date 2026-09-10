@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router';
-import { Card, Col, Row, Statistic, Typography } from 'antd';
+import { Card, Col, Row, Statistic, Tooltip, Typography } from 'antd';
 import type { AccountStatus, Overview } from '@/api/types';
 import { ACCOUNT_STATUS_META } from '@/constants/account';
 
@@ -13,6 +13,11 @@ const ORDER: AccountStatus[] = ['ACTIVE', 'EXPIRING', 'UNVERIFIED', 'INVALID'];
 export function StatusSummary({ data }: StatusSummaryProps) {
   const navigate = useNavigate();
   const total = data.total ?? 0;
+  // 账号上了规模之后总数是估算的, 分状态计数会在上限处截断。
+  // 把这件事显式标出来, 而不是让一个约数装成精确值 ——
+  // 用户拿这个数去核对导入结果时, 差几个会被当成系统丢了账号。
+  const totalExact = data.total_exact !== false;
+  const statusCapped = data.by_status_capped === true;
 
   /** 跳到按状态筛选的账号列表 */
   const goToAccounts = (status?: AccountStatus) => {
@@ -30,7 +35,9 @@ export function StatusSummary({ data }: StatusSummaryProps) {
           style={{ height: '100%' }}
           styles={{ body: { padding: 16 } }}
         >
-          <Statistic title="账号总数" value={total} />
+          <Tooltip title={totalExact ? undefined : '账号量已超过精确统计的规模, 这里显示的是数据库的行数估计, 误差通常在几个百分点'}>
+            <Statistic title="账号总数" value={total} prefix={totalExact ? undefined : '约'} />
+          </Tooltip>
         </Card>
       </Col>
       {ORDER.map((status, index) => {
@@ -48,6 +55,7 @@ export function StatusSummary({ data }: StatusSummaryProps) {
               styles={{ body: { padding: 16 } }}
             >
               <Statistic
+                suffix={statusCapped && count > 0 ? '+' : undefined}
                 title={
                   <span>
                     <span
@@ -67,9 +75,11 @@ export function StatusSummary({ data }: StatusSummaryProps) {
                 value={count}
                 valueStyle={{ color: meta.hex }}
               />
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                占比 {percent}%
-              </Typography.Text>
+              {statusCapped ? null : (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  占比 {percent}%
+                </Typography.Text>
+              )}
             </Card>
           </Col>
         );
