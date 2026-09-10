@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kele/outlook-console/internal/fetcher"
 )
@@ -175,5 +176,34 @@ func TestPatternCacheIsBounded(t *testing.T) {
 	// 清空之后功能照常 —— 代价只是重新编译一次。
 	if got := ExtractCode(m, `\d{6}`); got != "482913" {
 		t.Fatalf("清空缓存后仍应正常工作，实际 %q", got)
+	}
+}
+
+// TestLastFetchIsPurged 钉住一个按账号数增长的内存泄漏。
+//
+// lastFetch 按账号 ID 存上次取件时刻，用于最小间隔判断。它原来只写不清 ——
+// 每个被取过件的账号都会留下一条永不释放的记录，内存占用随"取过件的账号
+// 总数"单调增长。账号池规模大时这会直接吃光内存。
+//
+// 条目的唯一用途是判断"距上次取件是否已过最小间隔"，超窗即无用。
+func TestLastFetchIsPurged(t *testing.T) {
+	o := &Orchestrator{}
+	now := time.Now()
+
+	// 一批很久以前的记录，加一条刚写的。
+	for i := 0; i < 100; i++ {
+		o.lastFetch.Store(int64(i), now.Add(-time.Hour))
+	}
+	o.lastFetch.Store(int64(999), now)
+
+	o.purgeRecent(now, 2*time.Second)
+
+	remaining := 0
+	o.lastFetch.Range(func(any, any) bool { remaining++; return true })
+	if remaining != 1 {
+		t.Fatalf("超窗的记录应被清掉，只剩刚写的那条，实际剩 %d 条", remaining)
+	}
+	if _, ok := o.lastFetch.Load(int64(999)); !ok {
+		t.Fatal("窗口内的记录不该被清掉 —— 清了就等于最小间隔失效")
 	}
 }

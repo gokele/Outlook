@@ -109,6 +109,10 @@ type Orchestrator struct {
 	// 等待逻辑留在各自请求内，带 wait 的请求不会拖住不带 wait 的请求。
 	inflight sync.Map
 	// lastFetch 记录各账号上次拉取的时刻，用于最小间隔判断。
+	//
+	// 它按账号 ID 存，而账号数可以非常大 —— 必须跟着 recent 一起清，
+	// 否则每个被取过件的账号都会在内存里留一条永不释放的记录。
+	// 条目只在最小间隔那么长的时间里有意义，过了就是纯粹的占用。
 	lastFetch sync.Map
 	// recent 保存刚完成的拉取结局，仅在最小间隔内有效。
 	// 这不是缓存：邮件不落库，它只是把"同一个逻辑请求"答复一次，
@@ -377,6 +381,17 @@ func (o *Orchestrator) purgeRecent(now time.Time, window time.Duration) {
 	o.recent.Range(func(k, v any) bool {
 		if ent, ok := v.(recentEntry); !ok || now.Sub(ent.at) >= window {
 			o.recent.Delete(k)
+		}
+		return true
+	})
+	// lastFetch 一并清。它按账号 ID 存，账号数可以非常大 ——
+	// 不清的话每个取过件的账号都会留下一条永不释放的记录，
+	// 内存占用随"取过件的账号总数"单调增长，而不是随并发量。
+	// 条目的唯一用途是判断"距上次取件是否已过最小间隔"，
+	// 超过这个窗口的记录不再影响任何判断。
+	o.lastFetch.Range(func(k, v any) bool {
+		if t, ok := v.(time.Time); !ok || now.Sub(t) >= window {
+			o.lastFetch.Delete(k)
 		}
 		return true
 	})
