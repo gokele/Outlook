@@ -44,6 +44,16 @@ export function AppLayout() {
           justifyContent: 'space-between',
           gap: 16,
           paddingInline: isNarrow ? 12 : 24,
+          /*
+            必须盖掉 antd 给 Layout.Header 的 line-height: 64px。
+            那是为"非 flex 的老式顶栏"准备的 —— 靠一个和顶栏等高的行盒把内容顶到中间。
+            这里顶栏已经是 flex + alignItems:center，那个行盒只剩害处：
+            它被顶栏里每个元素继承，于是 Typography 的省略号样式
+            (vertical-align: bottom) 会把用户名贴到 64px 行盒的底边，
+            比旁边 vertical-align: middle 的头像低 21px，直接掉出 40px 高的按钮。
+            "用户名跑到头像下面去了"就是这么来的，跟折行没关系。
+          */
+          lineHeight: token.lineHeight,
           background: token.colorBgContainer,
           borderBottom: `1px solid ${token.colorSplit}`,
         }}

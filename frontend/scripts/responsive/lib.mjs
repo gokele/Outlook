@@ -232,8 +232,16 @@ export const PAGE_PROBE = (isMobile) => {
    * 只看定高的容器（固定 height 或 max-height）。普通容器被内容撑高是正常的，
    * 报出来全是噪音；定高容器装不下才是真的出事了。
    */
+  /*
+   * 按钮和标签也算定高容器 —— 这一条是补上一个真实漏网的：
+   * 顶栏里用户名掉到头像下面，它撑破的其实是那个 40px 高的按钮，
+   * 而相对顶栏只越界 1px，卡在容差里报不出来。只盯最外层的容器不够，
+   * 真正装不下内容的往往是里面那个定高的控件。
+   */
   const fixedHeightHosts = [
-    ...document.querySelectorAll('.ant-layout-header, .ant-card-head, .ant-table-thead th'),
+    ...document.querySelectorAll(
+      '.ant-layout-header, .ant-card-head, .ant-table-thead th, .ant-btn, .ant-tag',
+    ),
   ];
   for (const host of fixedHeightHosts) {
     const hr = host.getBoundingClientRect();
@@ -268,13 +276,24 @@ export const PAGE_PROBE = (isMobile) => {
   for (const row of document.querySelectorAll(
     '.ant-layout-header .ant-space, .ant-card-head-title, .ant-table-thead th .ant-space',
   )) {
-    const kids = [...row.children].filter((c) => c.getBoundingClientRect().height > 0);
+    /*
+     * 比的是内容本身，不是 Space 给每项套的那层 .ant-space-item。
+     * 那层壳会被拉伸到等高，两项的顶边因此永远相同 —— 里面一个贴顶一个贴底
+     * 也照样"对齐"。真出过这个事：用户名掉到头像下面，而两层壳纹丝不动。
+     * 同理比中线不比顶边：头像 24px、文字 22px，顶边本来就该差一点。
+     */
+    const kids = [...row.children]
+      .flatMap((c) => (c.classList.contains('ant-space-item') ? [...c.children] : [c]))
+      .filter((c) => c.getBoundingClientRect().height > 0);
     if (kids.length < 2) continue;
-    const tops = kids.map((c) => Math.round(c.getBoundingClientRect().top));
-    if (Math.max(...tops) - Math.min(...tops) > 4) {
+    const mids = kids.map((c) => {
+      const r = c.getBoundingClientRect();
+      return Math.round(r.top + r.height / 2);
+    });
+    if (Math.max(...mids) - Math.min(...mids) > 4) {
       issues.push({
-        kind: '应单行的内容折行了',
-        detail: `${row.className.toString().split(' ')[0]} 子项顶边 ${tops.join(',')}`,
+        kind: '同一行的内容没对齐',
+        detail: `${row.className.toString().split(' ')[0]} 各项中线 ${mids.join(',')}`,
       });
       break;
     }
