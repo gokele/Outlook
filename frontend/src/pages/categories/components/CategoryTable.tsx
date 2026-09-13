@@ -94,7 +94,11 @@ export function CategoryTable({
       align: 'right',
       render: (count: number, record) =>
         count > 0 ? (
-          <Link to="/accounts" search={{ category_id: String(record.id), page: 1 }}>
+          <Link
+            className="okc-count-link"
+            to="/accounts"
+            search={{ category_id: String(record.id), page: 1 }}
+          >
             <Tag color="processing" style={{ marginInlineEnd: 0 }}>
               {count}
             </Tag>

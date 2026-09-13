@@ -143,7 +143,11 @@ export function TagPanel() {
                   }
                 />
                 {tag.count > 0 ? (
-                  <Link to="/accounts" search={{ tag: tag.name, page: 1 }}>
+                  <Link
+                    className="okc-count-link"
+                    to="/accounts"
+                    search={{ tag: tag.name, page: 1 }}
+                  >
                     <Tag color="processing" style={{ marginInlineEnd: 0 }}>
                       {tag.count}
                     </Tag>

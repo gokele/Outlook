@@ -110,6 +110,22 @@ body {
   animation: okc-route-in 0.26s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 }
 
+/*
+ * 计数标签外面套的那个链接。
+ *
+ * <a> 的大小完全由里面那个数字撑开，于是可点区域的宽窄取决于装了什么字体：
+ * 同样是「30」，macOS 的字体下 31px，换到 Linux 就只剩 29px —— 点不点得中
+ * 成了看运气的事。这里给一个与字体无关的下限，标签本身的观感一点不变，
+ * 变大的只是手指能够着的范围。
+ */
+.okc-count-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 32px;
+}
+
 /* 表格行悬浮时轻微提亮, 配合 antd 自带的底色变化让指向更明确 */
 .ant-table-wrapper .ant-table-tbody > tr > td {
   transition: background-color 0.18s ease;
