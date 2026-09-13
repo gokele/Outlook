@@ -205,7 +205,11 @@ func (c *pop3Conn) authenticate(ctx context.Context, email, accessToken string) 
 		return err
 	}
 	if !strings.HasPrefix(line, "+") || strings.HasPrefix(line, "+OK") {
-		return fmt.Errorf("POP3 服务端未接受 AUTH XOAUTH2（%s），该邮箱可能未开通 POP3", strings.TrimSpace(line))
+		// 走到这里说明服务端连 AUTH XOAUTH2 这条命令都没接受，与"凭据被拒"
+		// 是两回事：前者是服务端不支持或不让用这种认证方式，后者见 pop3AuthHint。
+		return fmt.Errorf("POP3 服务端不接受 XOAUTH2 认证方式（%s），"+
+			"请确认服务器地址与端口正确（微软为 outlook.office365.com:995），"+
+			"以及该邮箱所在租户没有禁用 POP", strings.TrimSpace(line))
 	}
 	if err := c.send(ctx, XOAuth2(email, accessToken)); err != nil {
 		return err
@@ -229,10 +233,32 @@ func (c *pop3Conn) authenticate(ctx context.Context, email, accessToken string) 
 			line = l
 		}
 	}
-	if detail != "" {
-		return fmt.Errorf("POP3 XOAUTH2 认证失败: %s（%s）", strings.TrimSpace(line), detail)
+	return fmt.Errorf("POP3 认证被拒绝：%s%s。%s",
+		strings.TrimSpace(line), detailSuffix(detail), pop3AuthHint)
+}
+
+// pop3AuthHint 解释"认证被拒绝"到底意味着什么。
+//
+// 微软对下面这几种完全不同的情况回的是同一句 "Authentication failure:
+// unknown user name or bad password"，照搬它等于把人引向"是不是密码错了"——
+// 而密码根本不参与 XOAUTH2，这条路上压根没有密码。
+//
+// 尤其是第一条：**outlook.com 个人账号的 POP 默认是关闭的**（IMAP 默认开着）。
+// 而 POP 关闭时服务器照样接受 AUTH XOAUTH2 命令，只在验证凭据这一步才拒绝，
+// 所以"未开通"的提示不能挂在上一步，只能挂在这里。
+const pop3AuthHint = "令牌本身已经拿到，是邮箱侧拒绝了，常见原因依次为：" +
+	"1) 该邮箱没有开启 POP —— outlook.com 个人账号默认关闭，" +
+	"需在邮箱设置的「同步电子邮件」里把 POP 打开；" +
+	"2) 导入的是别名地址，POP 登录只认主邮箱；" +
+	"3) 该 client_id 没有被授予 POP.AccessAsUser.All 权限。" +
+	"取件仍可走 Graph 或 IMAP，此账号会被标记为 POP 不可用"
+
+// detailSuffix 把服务端回的 base64 详情包成括号，没有详情时返回空串。
+func detailSuffix(detail string) string {
+	if detail == "" {
+		return ""
 	}
-	return fmt.Errorf("POP3 XOAUTH2 认证失败: %s", strings.TrimSpace(line))
+	return "（" + detail + "）"
 }
 
 // stat 返回邮箱当前的邮件总数。

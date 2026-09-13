@@ -57,10 +57,7 @@ func New(cfg *config.Config, st *store.Store, box *crypto.Box, ts *tokensvc.Serv
 	}
 }
 
-// Handler 返回挂载好全部路由的处理器。
-//
-// 路由分三组：后台会话认证的 /api/admin，Bearer Key 认证的 /api/v1，
-// 以及无需认证的健康检查。前后端同源部署，不开放跨域。// SetPool 注入代理池，启用账号级出口隔离。
+// SetPool 注入代理池，启用账号级出口隔离。
 // 用注入而不是构造参数，是为了让未配置代理的部署与测试保持原样。
 func (s *Server) SetPool(p *proxypool.Pool) { s.pool = p }
 
@@ -72,9 +69,24 @@ func (s *Server) SetRestart(before, exit func()) {
 	s.beforeRestart, s.restart = before, exit
 }
 
+// Handler 返回挂载好全部路由的处理器。
+//
+// 路由分三组：后台会话认证的 /api/admin，Bearer Key 认证的 /api/v1，
+// 以及无需认证的健康检查。前后端同源部署，不开放跨域。
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP)
+	// 来源 IP 必须在最前面认定，后面的限速与白名单都依赖它。
+	//
+	// 这里不用 chi 的 middleware.RealIP —— 该版本已把它标记为 Deprecated，
+	// 理由是它无条件相信 X-Forwarded-For 等请求头，任何人都能伪造来源 IP。
+	// 替换实现见 clientip.go：只有连接确实来自可信反代时才采信请求头。
+	trusted, bad := parseTrustedProxies(s.cfg.TrustedProxies)
+	if len(bad) > 0 {
+		s.log.Error("TRUSTED_PROXIES 里有无法解析的条目，已忽略；"+
+			"若你的反代地址写在其中，来源 IP 会退回 TCP 连接地址",
+			"invalid", strings.Join(bad, ","))
+	}
+	r.Use(clientIPMiddleware(trusted, s.log))
 	r.Use(middleware.Recoverer)
 	r.Use(requestIDMiddleware)
 	r.Use(middleware.Timeout(180 * time.Second)) // 需大于长轮询上限

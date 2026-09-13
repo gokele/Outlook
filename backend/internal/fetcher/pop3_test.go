@@ -245,7 +245,9 @@ func TestPOP3AuthNotSupported(t *testing.T) {
 	c := newFakeConn(script)
 	f := NewPOP3(Deps{Dial: dialFake(c), Timeout: 5 * time.Second})
 	err := f.Probe(context.Background(), Account{Email: "me@example.com"}, "TK")
-	if err == nil || !strings.Contains(err.Error(), "未开通 POP3") {
+	// 这一步与"凭据被拒"必须给出不同的说明：前者是服务端不支持这种认证方式，
+	// 后者是邮箱侧拒绝了令牌，两者的排查方向完全不同。
+	if err == nil || !strings.Contains(err.Error(), "不接受 XOAUTH2 认证方式") {
 		t.Fatalf("服务端不认 AUTH XOAUTH2 时应给出明确说明，得到 %v", err)
 	}
 	if strings.Contains(c.written(), XOAuth2("me@example.com", "TK")) {
@@ -279,5 +281,36 @@ func TestPOP3RawOutOfRange(t *testing.T) {
 	f := NewPOP3(Deps{Dial: dialFake(c), Timeout: 5 * time.Second})
 	if _, err := f.Raw(context.Background(), Account{Email: "me@example.com"}, "TK", "num:9"); err == nil {
 		t.Fatal("超出范围的消息号应被拒绝")
+	}
+}
+
+// 凭据被拒时，错误必须说清楚"这不是密码问题"。
+//
+// 微软对"POP 没开"、"用了别名"、"scope 没授权"这几种完全不同的情况，
+// 回的都是同一句 unknown user name or bad password。照搬它会把人引向
+// 检查密码——而 XOAUTH2 这条路上根本没有密码，那个方向一定是死路。
+func TestPOP3AuthRejectedExplainsWhy(t *testing.T) {
+	script := "+OK ready\r\n+ \r\n" +
+		"-ERR Authentication failure: unknown user name or bad password.\r\n"
+	c := newFakeConn(script)
+	f := NewPOP3(Deps{Dial: dialFake(c), Timeout: 5 * time.Second})
+	err := f.Probe(context.Background(), Account{Email: "me@example.com"}, "TK")
+	if err == nil {
+		t.Fatal("凭据被拒时应返回错误")
+	}
+	msg := err.Error()
+	// 服务端原话要保留，排查时还得靠它。
+	if !strings.Contains(msg, "unknown user name or bad password") {
+		t.Errorf("应保留服务端原话: %v", err)
+	}
+	// 但必须同时给出真正的成因方向。
+	for _, want := range []string{"没有开启 POP", "别名", "POP.AccessAsUser.All"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("提示里应包含 %q: %v", want, err)
+		}
+	}
+	// 令牌绝不能出现在错误信息里 —— 它会被写进日志和界面。
+	if strings.Contains(msg, "TK") {
+		t.Errorf("错误信息不得包含访问令牌: %v", err)
 	}
 }

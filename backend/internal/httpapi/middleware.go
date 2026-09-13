@@ -166,21 +166,6 @@ func ipAllowed(r *http.Request, list []string) bool {
 	return false
 }
 
-// clientIP 取真实来源 IP。同源部署下 Nginx 会带上 X-Real-IP。
-func clientIP(r *http.Request) string {
-	if v := r.Header.Get("X-Real-IP"); v != "" {
-		return strings.TrimSpace(v)
-	}
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		return strings.TrimSpace(strings.Split(v, ",")[0])
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
 // checkScope 校验 API Key 是否有权访问该账号所属的分类。
 func checkScope(key *model.APIKey, acc *model.Account) error {
 	if key == nil || len(key.ScopeCategoryIDs) == 0 {

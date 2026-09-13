@@ -129,7 +129,14 @@ func (c *imapConn) authenticate(ctx context.Context, email, token string) error 
 			detail = d + "；" + detail
 		}
 	}
-	return fmt.Errorf("IMAP XOAUTH2 认证失败（%s）: %s", res.Status, strings.TrimSpace(detail))
+	// 与 POP3 同理：微软对好几种成因回的是同一句含糊的认证失败，
+	// 照搬会把人引向"是不是密码错了"，而 XOAUTH2 这条路上根本没有密码。
+	return fmt.Errorf("IMAP 认证被拒绝（%s）：%s。令牌本身已经拿到，是邮箱侧拒绝了，"+
+		"常见原因依次为：1) 该邮箱没有开启 IMAP，需在邮箱设置的「同步电子邮件」里打开；"+
+		"2) 导入的是别名地址，IMAP 登录只认主邮箱；"+
+		"3) 该 client_id 没有被授予 IMAP.AccessAsUser.All 权限。"+
+		"取件仍可走 Graph 或 POP3，此账号会被标记为 IMAP 不可用",
+		res.Status, strings.TrimSpace(detail))
 }
 
 // selectMailbox 依次尝试候选名做 SELECT，返回该邮箱当前的邮件总数。

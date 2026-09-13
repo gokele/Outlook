@@ -68,8 +68,9 @@ npm install && npm run dev  # 代理 /api 到 127.0.0.1:8080
 TEST_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/dbname go test -count=1 ./...
 ```
 
-CI 目前只做打包构建、不跑测试（见 `.github/workflows/release.yml`），
-这一步因此落在人工上。
+CI 会在真实 PostgreSQL 上跑一遍（见 `.github/workflows/test.yml`，
+带 `postgres:17` service，SQLite 与 PostgreSQL 各跑一趟），
+因此推上去就能知道结果；本地改数据库相关代码时仍建议自己先跑一遍。
 
 ## 关键设计点，改代码前先读
 
@@ -78,6 +79,7 @@ CI 目前只做打包构建、不跑测试（见 `.github/workflows/release.yml`
 - **client_id 熔断**（`tokensvc.checkAndSuspend`）：先于账号状态判定生效。几千个账号常共用少数 client_id，应用被封时逐个标失效会造成大规模误判。
 - **调度速率由积压推导**（`internal/scheduler/scheduler.go`）：不设每日配额。配额要人工从账号数反推，账号增长后会静默失效。速率上限取单 IP、单 client_id、全局并发三者最小值。
 - **速率上限本身也自动推导，但只往下调**（`internal/scheduler/autorate.go`）：单 IP、单 client_id 两条上限原来是手填的，十万账号和十亿账号需要的速率差四个数量级，没人能凭直觉估准。自适应按"账号数 ÷ 轮换阈值"算出稳态需求，留 1.5 倍余量后分摊到各出口与各应用。**需求高于安全上限时速率停在上限**（单 IP 30/分钟、单 client_id 20/分钟），并报出还缺多少出口与应用注册——照着需求把速率调上去不是提高吞吐，是送去封号，而且封的是整批账号赖以存活的应用注册。推导结果缓存 5 分钟且计数带超时：`COUNT(*)` 在十亿行上是分钟级全表扫描，每个 tick 数一次会把调度器卡死在计数上。
+- **来源 IP 只在连接来自可信反代时才采信请求头**（`internal/httpapi/clientip.go`）：`X-Forwarded-For` 与 `X-Real-IP` 是请求方写的，无条件相信它们等于让人自己声明来源 IP——而 API Key 的 IP 白名单与登录限速都以来源 IP 为判据，于是两个安全控制一起失效。判可信必须看 `r.RemoteAddr`（内核填的，伪造不了）。链里取**最右**那个非反代地址：nginx 的 `proxy_add_x_forwarded_for` 是把真实客户端追加到客户端自带的值后面，取最左等于专门去读攻击者写的内容。chi 的 `middleware.RealIP` 已被官方标记 Deprecated（三个 CVE），不要用；它的替代 `ClientIPFromXFF` 也不看 `RemoteAddr`，把「只有反代能连到本服务」交给防火墙保证，那个前提在自建部署里常常不成立。
 - **账号表按邮箱哈希切成 64 个分区**（`internal/store/shard.go`、`partition.go`）：十亿账号待在一张表里，问题不是查询慢，是**没法维护**——VACUUM 几十小时、建一次索引锁半天、备份没有任何粒度。分片键选邮箱而不是 id 有个硬理由：PostgreSQL 的分区表只能建包含分区键的唯一约束，按 id 分片就保不住 `email` 全局唯一，而查重是导入的地基；按邮箱哈希分片时 `UNIQUE (shard, email)` 恰好等价于 `UNIQUE (email)`。代价是按 id 查要在 64 个分区上各探一次索引（不到 1 毫秒），换来的是按邮箱查——取件 API 最热的路径——直接裁剪到一个分区。`ShardCount` 一旦有数据就不能改。SQLite 不分区也不需要分区，`shard`/`domain` 两列照样写，两边共用同一套 SQL。
 - **切分区的迁移会推迟**（`maxAutoPartitionRows`）：转换要整表重写并全程持锁。超过一百万行就只记日志不动手，下次启动再判断一次——那种代价必须由人挑时间承担，而不是某次例行重启时冷不丁发生。推迟不影响其余迁移，系统照常工作，只是仍然是单表。
 - **日志按天分区，过期整个 DROP**（`internal/store/logpartition.go`）：accounts 是存量大，`fetch_logs` 是增量大，压垮数据库的方式不同。十亿账号每天一千六百万条轮换日志，致命的不是占多少空间而是**怎么删**——`DELETE` 会留下同样多的死元组，autovacuum 一天追不完一天的量，删得越多表越肿。表先按 `kind` 分成 ops/audit 两支（保留期差一个数量级：运营 30 天、审计 365 天），再只对 ops 那一支按天切开，到期整个分区 DROP。分两层而不是拆成两张表，是为了让 `fetch_logs` 仍是一张表，日志页的筛选、统计、清空一个字都不用改。**分区必须先于日志存在**：启动时与每小时的例行维护都会补建，另有一个 DEFAULT 分区兜底（正常应当一直是空的，非空会告警）。

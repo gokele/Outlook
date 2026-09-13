@@ -32,6 +32,16 @@ type Config struct {
 	UpdateRepo string
 	// EnvExplicit 为真表示 APP_ENV 是人显式设的，假表示由监听地址推断得来。
 	EnvExplicit bool
+	// TrustedProxies 是允许代填来源 IP 的反代地址，逗号分隔的 IP 或 CIDR。
+	//
+	// 只有当 TCP 连接本身来自这里列出的地址时，X-Forwarded-For 才会被采信；
+	// 其他情况一律以 TCP 连接地址为准。这一条是两个安全控制的地基：
+	// API Key 的 IP 白名单，以及登录失败限速。少了它，任何人加一个请求头
+	// 就能冒充白名单里的 IP、或者让限速永远数不满。
+	//
+	// 默认只信本机回环，对应文档里「反代与本服务同机」的部署方式。
+	// 反代在另一台机器上时，把那台机器的地址填进来。
+	TrustedProxies string
 }
 
 // Load 读取环境变量并校验必填项。
@@ -44,6 +54,7 @@ func Load() (*Config, error) {
 
 		AllowDirectFallback: env("PROXY_ALLOW_DIRECT_FALLBACK", "false") == "true",
 		UpdateRepo:          env("UPDATE_REPO", "gokele/Outlook"),
+		TrustedProxies:      env("TRUSTED_PROXIES", "127.0.0.0/8,::1/128"),
 	}
 	c.Dev, c.EnvExplicit = inferDev(c.Addr)
 

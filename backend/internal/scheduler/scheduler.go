@@ -81,6 +81,11 @@ func DefaultConfig() Config {
 	}
 }
 
+// logKeepDays 是取件与轮换日志的保留天数。
+//
+// 审计日志（查看凭据）不受这个值约束，它单独留一年，见 store.AuditKeepDays。
+const logKeepDays = 30
+
 // Scheduler 是调度器实例。
 type Scheduler struct {
 	st  *store.Store
@@ -158,9 +163,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 			s.log.Info("轮换调度器已停止")
 			return
 		case <-housekeep.C:
-			_ = s.st.PurgeExpiredLeases(ctx)
-			_ = s.st.PurgeExpiredSessions(ctx)
-			_ = s.st.PurgeOldLogs(ctx, 30)
+			s.housekeep(ctx)
 		case <-t.C:
 			if !s.Config().Enabled {
 				continue
@@ -347,12 +350,20 @@ func (s *Scheduler) egressIPs(cfg Config) int {
 	if pool == nil {
 		return cfg.EgressIPs
 	}
-	n, err := s.st.CountHealthyProxies(context.Background())
+	// 带超时：这个查询在每次算额度时都会跑，库一旦卡住就会把整个调度轮次
+	// 拖住不动。数不出来时按 1 个出口算 —— 宁可这一轮慢，也不要按一个
+	// 猜出来的大数去发请求。
+	ctx, cancel := context.WithTimeout(context.Background(), egressCountTimeout)
+	defer cancel()
+	n, err := s.st.CountHealthyProxies(ctx)
 	if err != nil || n <= 0 {
 		return 1
 	}
 	return n
 }
+
+// egressCountTimeout 是数健康出口的超时。这张表最多几千行，正常是毫秒级。
+const egressCountTimeout = 5 * time.Second
 
 // process 并发执行轮换，同时受全局并发与单 client_id 速率两重约束。
 func (s *Scheduler) process(ctx context.Context, tasks []store.RotateTask, cfg Config) int {
@@ -721,4 +732,22 @@ func firstVerifySchedule(unverified, perMin int) (perDay, days int) {
 		return perDay, 0
 	}
 	return perDay, int(math.Ceil(float64(unverified) / float64(perDay)))
+}
+
+// housekeep 是每小时一次的顺带清理。
+//
+// 三件事的失败都不应该中断调度，但**必须说出来**。
+// 尤其是日志清理：它同时负责把随后几天的日志分区建出来，而分区不存在时
+// 日志会落进兜底分区、过期后再也删不掉。这类故障一声不吭地累积几个月，
+// 等有人注意到时已经没法从现场倒推是哪一天开始的了。
+func (s *Scheduler) housekeep(ctx context.Context) {
+	if err := s.st.PurgeExpiredLeases(ctx); err != nil {
+		s.log.Warn("清理过期租约失败", "err", err)
+	}
+	if err := s.st.PurgeExpiredSessions(ctx); err != nil {
+		s.log.Warn("清理过期会话失败", "err", err)
+	}
+	if err := s.st.PurgeOldLogs(ctx, logKeepDays); err != nil {
+		s.log.Error("清理过期日志失败，日志分区可能没有按时建出来", "err", err)
+	}
 }
