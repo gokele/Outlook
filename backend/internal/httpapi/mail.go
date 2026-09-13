@@ -58,7 +58,10 @@ func (s *Server) resolveAccount(r *http.Request) (*model.Account, error) {
 }
 
 // buildFetchRequest 从查询参数构造取件请求。
-func (s *Server) buildFetchRequest(r *http.Request, acc *model.Account, trigger string) orchestrator.Request {
+//
+// 参数格式不对时返回错误而不是忽略：一个能安静返回错误答案的过滤条件，
+// 比直接报错危险得多 —— 详见下面 since 那一段。
+func (s *Server) buildFetchRequest(r *http.Request, acc *model.Account, trigger string) (orchestrator.Request, *APIError) {
 	q := r.URL.Query()
 	req := orchestrator.Request{
 		Account:   acc,
@@ -69,18 +72,39 @@ func (s *Server) buildFetchRequest(r *http.Request, acc *model.Account, trigger 
 		Trigger:   trigger,
 		WithBody:  true,
 	}
+	// since 解析不了必须报错，不能悄悄当成"没传"。
+	//
+	// 这个参数的典型用途是「只要这一刻之后到的验证码」。格式写错时静默忽略，
+	// 调用方会拿到一封更早的邮件里的旧验证码，而且看起来完全正常 ——
+	// 一个能安静返回错误答案的过滤条件，比直接报错危险得多。
 	if v := q.Get("since"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
+		switch t, err := time.Parse(time.RFC3339, v); {
+		case err == nil:
 			req.Since = t.Unix()
-		} else if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		default:
+			n, nerr := strconv.ParseInt(v, 10, 64)
+			if nerr != nil {
+				return orchestrator.Request{}, newAPIError(400, "BAD_REQUEST",
+					"since 格式不对，应为 RFC3339 时间（2026-01-02T15:04:05Z）或 Unix 秒")
+			}
 			req.Since = n
 		}
 	}
 	if v := q.Get("limit"); v != "" {
-		req.Limit, _ = strconv.Atoi(v)
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return orchestrator.Request{}, newAPIError(400, "BAD_REQUEST",
+				"limit 应为非负整数")
+		}
+		req.Limit = n
 	}
 	if v := q.Get("wait"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return orchestrator.Request{}, newAPIError(400, "BAD_REQUEST",
+				"wait 应为 0 到 120 之间的秒数")
+		}
+		if n > 0 {
 			req.Wait = time.Duration(n) * time.Second
 		}
 	}
@@ -91,7 +115,7 @@ func (s *Server) buildFetchRequest(r *http.Request, acc *model.Account, trigger 
 		id := key.ID
 		req.APIKeyID = &id
 	}
-	return req
+	return req, nil
 }
 
 // mapFetchError 把编排层与令牌层的错误映射成对外错误码。
@@ -128,7 +152,11 @@ func (s *Server) handleMailLatest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err, s.log)
 		return
 	}
-	req := s.buildFetchRequest(r, acc, "api")
+	req, berr := s.buildFetchRequest(r, acc, "api")
+	if berr != nil {
+		writeError(w, r, berr, s.log)
+		return
+	}
 
 	// 可选租约：取件成功后锁定该账号，租约期内其他 Key 拿不到。
 	var leaseInfo *model.Lease
@@ -171,7 +199,11 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err, s.log)
 		return
 	}
-	req := s.buildFetchRequest(r, acc, "api")
+	req, berr := s.buildFetchRequest(r, acc, "api")
+	if berr != nil {
+		writeError(w, r, berr, s.log)
+		return
+	}
 	req.Wait = 0
 	res, ferr := s.orch.Fetch(r.Context(), req)
 	if ferr != nil && !errors.Is(ferr, orchestrator.ErrNoMessage) {
@@ -233,7 +265,11 @@ func (s *Server) handleMailClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req := s.buildFetchRequest(r, acc, "api")
+	req, berr := s.buildFetchRequest(r, acc, "api")
+	if berr != nil {
+		writeError(w, r, berr, s.log)
+		return
+	}
 	if req.Since == 0 {
 		req.Since = lease.AcquiredAt // 关键：只等领取之后的新邮件
 	}
@@ -342,7 +378,11 @@ func (s *Server) handleAdminMail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err, s.log)
 		return
 	}
-	req := s.buildFetchRequest(r, acc, "ui")
+	req, berr := s.buildFetchRequest(r, acc, "ui")
+	if berr != nil {
+		writeError(w, r, berr, s.log)
+		return
+	}
 	req.Wait = 0
 	res, ferr := s.orch.Fetch(r.Context(), req)
 	if ferr != nil && !errors.Is(ferr, orchestrator.ErrNoMessage) {
@@ -405,7 +445,11 @@ func (s *Server) handleMailExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err, s.log)
 		return
 	}
-	req := s.buildFetchRequest(r, acc, "api")
+	req, berr := s.buildFetchRequest(r, acc, "api")
+	if berr != nil {
+		writeError(w, r, berr, s.log)
+		return
+	}
 	req.Wait = 0
 	if req.Limit <= 0 {
 		req.Limit = 50

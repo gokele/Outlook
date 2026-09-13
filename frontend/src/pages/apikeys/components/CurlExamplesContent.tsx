@@ -12,32 +12,37 @@ interface Snippet {
 
 const ORIGIN = typeof window === 'undefined' ? 'https://your-domain' : window.location.origin;
 
-/** 开放 API 调用示例, 路径与后端 /api/v1 路由一致 */
+/**
+ * 开放 API 调用示例, 路径与后端 /api/v1 路由一致。
+ *
+ * 这些命令要能被直接粘进 Apifox / Postman / Insomnia 导入, 因此有两条硬规矩:
+ *
+ *   1. **不用 `$(...)` 命令替换。** 导入工具不会去执行 shell, 遇到它只会报
+ *      "cURL 命令有误"。曾经这里写过 `since=$(date -u -v-10M ...)`,
+ *      既导不进去, 那个 `-v-10M` 还是 macOS 专属写法, 在 Linux 上直接失败。
+ *   2. **参数直接写在 URL 上, 不用 `-G --data-urlencode`。** 后者是合法 curl,
+ *      但不少导入工具解析不了, 而查询串是所有工具都认的写法。
+ *
+ * 密钥用一个显眼的占位串而不是 `$API_KEY`: 变量对 shell 方便, 对导入工具
+ * 却只是一段没有意义的文本, 而占位串两边都能一眼看出"这里要替换"。
+ */
+const KEY_PLACEHOLDER = 'okc_PASTE_YOUR_KEY_HERE';
+
 const SNIPPETS: Snippet[] = [
   {
     key: 'latest',
     label: '取最新一封',
     description:
-      '主接口。支持按发件人/主题/时间过滤, wait 为长轮询秒数 (0-120), code_regex=default 使用预置的 4-8 位数字提取; 没有命中邮件时返回 204 NO_MESSAGE。',
-    command: `curl -sS -G "${ORIGIN}/api/v1/mail/latest" \\
-  -H "Authorization: Bearer $API_KEY" \\
-  --data-urlencode "email=user@outlook.com" \\
-  --data-urlencode "folder=inbox,junk" \\
-  --data-urlencode "subject=verification" \\
-  --data-urlencode "since=$(date -u -v-10M +%Y-%m-%dT%H:%M:%SZ)" \\
-  --data-urlencode "wait=30" \\
-  --data-urlencode "code_regex=default"`,
+      '主接口。支持按发件人/主题/时间过滤, wait 为长轮询秒数 (0-120), code_regex=default 使用预置的 4-8 位数字提取; 没有命中邮件时返回 204 NO_MESSAGE。since 支持 RFC3339 时间或 Unix 秒, 格式不对会返回 400 而不是被忽略。',
+    command: `curl -sS "${ORIGIN}/api/v1/mail/latest?email=user@outlook.com&folder=inbox,junk&subject=verification&wait=30&code_regex=default" \\
+  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"`,
   },
   {
     key: 'list',
     label: '取最近若干封',
     description: '一次在线取件后返回最近的多封邮件。body=none 可跳过正文, 显著减小响应体积。',
-    command: `curl -sS -G "${ORIGIN}/api/v1/mail/list" \\
-  -H "Authorization: Bearer $API_KEY" \\
-  --data-urlencode "email=user@outlook.com" \\
-  --data-urlencode "folder=inbox,junk" \\
-  --data-urlencode "limit=10" \\
-  --data-urlencode "body=none"`,
+    command: `curl -sS "${ORIGIN}/api/v1/mail/list?email=user@outlook.com&folder=inbox,junk&limit=10&body=none" \\
+  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"`,
   },
   {
     key: 'claim',
@@ -45,24 +50,19 @@ const SNIPPETS: Snippet[] = [
     description:
       '按分类领取一个空闲账号并加租约, 需要 Key 开启"允许租约独占"。注意: 默认只返回租约获取之后到达的邮件, 因此适合"先领号再触发注册"的流程。lease 上限 1800 秒。',
     command: `# 领号并持有 300 秒租约
-curl -sS -G "${ORIGIN}/api/v1/mail/claim" \\
-  -H "Authorization: Bearer $API_KEY" \\
-  --data-urlencode "category_id=1" \\
-  --data-urlencode "lease=300"
+curl -sS "${ORIGIN}/api/v1/mail/claim?category_id=1&lease=300" \\
+  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"
 
 # 用完提前释放, 让账号立刻回到可用池
 curl -sS -X DELETE "${ORIGIN}/api/v1/mail/lease/123" \\
-  -H "Authorization: Bearer $API_KEY"`,
+  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"`,
   },
   {
     key: 'raw',
     label: '下载原文',
     description: '按 message_id 下载 .eml 原文, channel 指定用哪条通道取。',
-    command: `curl -sS -G "${ORIGIN}/api/v1/mail/raw" \\
-  -H "Authorization: Bearer $API_KEY" \\
-  --data-urlencode "email=user@outlook.com" \\
-  --data-urlencode "message_id=AAMkAG..." \\
-  --data-urlencode "channel=graph" \\
+    command: `curl -sS "${ORIGIN}/api/v1/mail/raw?email=user@outlook.com&message_id=AAMkAG...&channel=graph" \\
+  -H "Authorization: Bearer ${KEY_PLACEHOLDER}" \\
   -o message.eml`,
   },
   {
@@ -70,11 +70,8 @@ curl -sS -X DELETE "${ORIGIN}/api/v1/mail/lease/123" \\
     label: '导出邮件',
     description:
       '一次在线取件后流式输出, 不是从库里读 (系统不存邮件)。limit 默认 50, 上限 200。',
-    command: `curl -sS -G "${ORIGIN}/api/v1/mail/export" \\
-  -H "Authorization: Bearer $API_KEY" \\
-  --data-urlencode "email=user@outlook.com" \\
-  --data-urlencode "format=csv" \\
-  --data-urlencode "limit=200" \\
+    command: `curl -sS "${ORIGIN}/api/v1/mail/export?email=user@outlook.com&format=csv&limit=200" \\
+  -H "Authorization: Bearer ${KEY_PLACEHOLDER}" \\
   -o mail.csv`,
   },
   {
@@ -84,22 +81,20 @@ curl -sS -X DELETE "${ORIGIN}/api/v1/mail/lease/123" \\
       '含令牌导出需要 Key 开启"允许导出敏感信息", 且必须带 category_id 或 status 等筛选条件, 否则返回 400 SCOPE_REQUIRED (不允许一次导出全量)。',
     command: `# 列出授权范围内的账号
 curl -sS "${ORIGIN}/api/v1/accounts?category_id=1" \\
-  -H "Authorization: Bearer $API_KEY"
+  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"
 
 # 导出 (含 refresh_token, 必须带筛选条件)
-curl -sS -G "${ORIGIN}/api/v1/accounts/export" \\
-  -H "Authorization: Bearer $API_KEY" \\
-  --data-urlencode "category_id=1" \\
-  --data-urlencode "include_secrets=true"
+curl -sS "${ORIGIN}/api/v1/accounts/export?category_id=1&include_secrets=true" \\
+  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"
 
 # 导入与单账号验证
 curl -sS -X POST "${ORIGIN}/api/v1/accounts/import" \\
-  -H "Authorization: Bearer $API_KEY" \\
+  -H "Authorization: Bearer ${KEY_PLACEHOLDER}" \\
   -H "Content-Type: application/json" \\
   -d '{"text":"user@outlook.com----pass----client-id----refresh-token","separator":"----"}'
 
 curl -sS -X POST "${ORIGIN}/api/v1/accounts/123/verify" \\
-  -H "Authorization: Bearer $API_KEY"`,
+  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"`,
   },
 ];
 

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -44,6 +45,8 @@ type Server struct {
 	// jobs 持有后台批量任务。放在进程内存里：任务是纯粹的过程量，
 	// 已完成的部分本来就落库了，重启丢的只是"还剩多少"这个显示。
 	jobs *jobs.Registry
+	// mux 是 Handler 建好的路由器。只用于在 405 时反查该路径允许哪些方法。
+	mux *chi.Mux
 }
 
 // New 构造 HTTP 服务。
@@ -75,6 +78,8 @@ func (s *Server) SetRestart(before, exit func()) {
 // 以及无需认证的健康检查。前后端同源部署，不开放跨域。
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
+	// 留一份引用，405 的处理器要回头问它"这条路径认哪些方法"。
+	s.mux = r
 	// 来源 IP 必须在最前面认定，后面的限速与白名单都依赖它。
 	//
 	// 这里不用 chi 的 middleware.RealIP —— 该版本已把它标记为 Deprecated，
@@ -213,13 +218,53 @@ func (s *Server) Handler() http.Handler {
 		spa.ServeHTTP(w, r)
 	})
 	// 方法不匹配同样区分对待，理由同上。
+	//
+	// 错误信息里必须说清楚"该用什么方法"。光说"不被支持"，调用方只能回去翻文档，
+	// 而这个错误最常见的成因恰恰是工具自作主张换了方法 —— 比如把带
+	// --data-urlencode 的 curl 命令导进 API 客户端，它会当成 POST 发出去。
+	// 把允许的方法直接写在回复里，一眼就能看出是方法错了而不是路径错了。
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			writeError(w, r, newAPIError(405, "METHOD_NOT_ALLOWED", "请求方法不被支持"), s.log)
+			msg := "请求方法不被支持"
+			// 自己回头问一遍路由表这条路径认哪些方法，而不是读 chi 填的 Allow 头 ——
+			// 嵌套路由上那个头不一定有，而"不一定有"的提示等于没有提示。
+			if allow := s.allowedMethods(r.Method, r.URL.Path); allow != "" {
+				w.Header().Set("Allow", allow)
+				msg = fmt.Sprintf("该接口不支持 %s，请改用 %s", r.Method, allow)
+			}
+			writeError(w, r, newAPIError(405, "METHOD_NOT_ALLOWED", msg), s.log)
 			return
 		}
 		spa.ServeHTTP(w, r)
 	})
 
 	return r
+}
+
+// httpMethods 是会去反查的方法集合。
+// 不含 HEAD 与 OPTIONS：它们由框架另行处理，写进提示只会让人困惑。
+var httpMethods = []string{
+	http.MethodGet, http.MethodPost, http.MethodPut,
+	http.MethodPatch, http.MethodDelete,
+}
+
+// allowedMethods 返回某条路径实际认哪些方法，逗号分隔；一个都不认时返回空串。
+//
+// 逐个方法去问路由表，而不是读 chi 在 405 时填的 Allow 头 ——
+// 那个头在嵌套路由（本项目的 /api/v1 就是）上不一定会被填上，
+// 而一个"有时候有"的提示，等于让人不能依赖它。
+func (s *Server) allowedMethods(exclude, path string) string {
+	if s.mux == nil {
+		return ""
+	}
+	var out []string
+	for _, m := range httpMethods {
+		if m == exclude {
+			continue // 已知不认，不必再问
+		}
+		if s.mux.Match(chi.NewRouteContext(), m, path) {
+			out = append(out, m)
+		}
+	}
+	return strings.Join(out, ", ")
 }
