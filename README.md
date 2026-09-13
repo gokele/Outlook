@@ -64,16 +64,20 @@ carol@outlook.com----Pa55word----9e5f94bc-…----M.C528_BAY.0.U.-Xy2…----carol
 全部端点都收 `POST`，参数写在 JSON 请求体里；读取类端点同时保留 `GET`。
 
 ```bash
-# 取最新一封，等待新邮件最多 30 秒，顺便提取验证码
+# 取回此刻邮箱里最新的一封，顺便提取验证码。默认立刻返回。
 curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
-  -H "Authorization: Bearer okc_xxx" \
+  -H "Authorization: Bearer kl_xxx" \
   -H "Content-Type: application/json" \
-  -d '{"email":"alice@outlook.com","from":"noreply@example.com","wait":30,"code_regex":"default"}'
+  -d '{"email":"alice@outlook.com","code_regex":"default"}'
 ```
 
 响应里的 `folder_coverage` 说明本次实际覆盖了哪些文件夹。降级到 POP3 时只有 `["inbox"]`，意味着看不到垃圾邮件，结果可能不完整。
 
-主要参数：`email` 或 `account_id`、`folder`（默认 `inbox,junk`）、`from`、`subject`、`since`、`wait`（0 到 120 秒长轮询）、`code_regex`、`lease`（申请账号租约的秒数）。
+主要参数：`email` 或 `account_id`、`folder`（默认 `inbox,junk`）、`from`、`subject`、`since`、`code_regex`、`lease`（申请账号租约的秒数），以及可选的 `wait`。
+
+**`wait` 默认是 0，也就是立刻返回。** 传了它才长轮询：服务器挂住连接一直等**新**邮件，
+最长 120 秒，请求会卡住几十秒——那是它的本意，用于"先触发对方发信、再来收码"的流程。
+调试时不要顺手加它，更不要同时加 `subject` 过滤，那等于让邮箱里已有的邮件一封都不返回。
 
 完整的接口列表、字段说明与错误码见 [API.md](API.md)。
 

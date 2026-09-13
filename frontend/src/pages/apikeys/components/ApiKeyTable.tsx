@@ -178,7 +178,10 @@ export function ApiKeyTable({
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      // 三个按钮要在同一行。各约 74px（图标 + 两字）加两道 4px 间距，
+      // 再算上单元格内边距，200 差了三十几像素，"删除"就被挤到第二行去了。
+      // 表格本身能横向滚动，这一列宽一点不会顶坏别处。
+      width: 260,
       render: (_, record) => {
         const revoked = record.revoked_at > 0;
         return (

@@ -30,7 +30,7 @@ const ORIGIN = typeof window === 'undefined' ? 'https://your-domain' : window.lo
  * 密钥用一个显眼的占位串而不是 `$API_KEY`: 变量对 shell 方便, 对导入工具
  * 却只是一段没有意义的文本, 而占位串两边都能一眼看出"这里要替换"。
  */
-const KEY_PLACEHOLDER = 'okc_PASTE_YOUR_KEY_HERE';
+const KEY_PLACEHOLDER = 'kl_PASTE_YOUR_KEY_HERE';
 
 /** 每条命令都带的两个头，抽出来避免逐条重复 */
 const HEADERS = `  -H "Authorization: Bearer ${KEY_PLACEHOLDER}" \\
@@ -48,14 +48,32 @@ const SNIPPETS: Snippet[] = [
     key: 'latest',
     label: '取最新一封',
     description:
-      '主接口。支持按发件人/主题/时间过滤, wait 为长轮询秒数 (0-120), code_regex=default 使用预置的 4-8 位数字提取; 没有命中邮件时返回 204 NO_MESSAGE。since 支持 RFC3339 时间或 Unix 秒, 格式不对会返回 400 而不是被忽略。',
+      '主接口, 先用这条。立刻返回邮箱里最新的一封, 并按 code_regex 提取验证码。没有邮件时返回 204 NO_MESSAGE —— 那是正常结果, 不是错误。',
+    /*
+      第一条示例刻意不带 wait。
+      wait 是长轮询: 服务器会挂住连接一直等新邮件, 最长两分钟。第一次试的人
+      看到的就是一个转圈不返回的请求, 会以为接口坏了 —— 而它只是在等。
+      把"等"挪到下一条, 并在那里把这件事说穿。
+    */
     command: post('/api/v1/mail/latest', {
       email: 'user@outlook.com',
-      folder: 'inbox,junk',
-      subject: 'verification',
-      wait: 30,
       code_regex: 'default',
     }),
+  },
+  {
+    key: 'wait',
+    label: '等新验证码（长轮询）',
+    description:
+      '⏳ 这条会挂住几十秒不返回, 那是它的本意: 服务器一直等到有新邮件到达, 或者等满 wait 秒 (0-120) 才回应。适合"先触发发信, 再来收码"的流程 —— 比自己循环调用省事, 也不会撞限流。等满没等到就返回 204。',
+    command: `# 只要此刻之后到达、且主题含 verification 的邮件, 最多等 30 秒。
+# 请求会卡住几十秒: 这是长轮询, 不是超时, 也不是接口坏了。
+${post('/api/v1/mail/latest', {
+  email: 'user@outlook.com',
+  folder: 'inbox,junk',
+  subject: 'verification',
+  wait: 30,
+  code_regex: 'default',
+})}`,
   },
   {
     key: 'list',

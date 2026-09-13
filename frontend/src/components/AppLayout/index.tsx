@@ -48,7 +48,8 @@ export function AppLayout() {
           borderBottom: `1px solid ${token.colorSplit}`,
         }}
       >
-        <Space size={12}>
+        {/* 左侧允许收缩并省略，把空间让给右侧的用户区 */}
+        <Space size={12} style={{ minWidth: 0, overflow: 'hidden' }}>
           {isNarrow ? (
             <Button
               type="text"
@@ -66,7 +67,10 @@ export function AppLayout() {
             </Typography.Text>
           )}
         </Space>
-        <UserMenu user={data?.user} />
+        {/* 顶栏右侧不参与收缩：左侧的标题与副标题可以让位，这里不行 */}
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+          <UserMenu user={data?.user} />
+        </div>
       </Layout.Header>
 
       <Layout>

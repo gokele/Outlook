@@ -8,6 +8,9 @@
 | 前缀 | 认证 | 用途 |
 |---|---|---|
 | `/api/admin` | 会话 Cookie（`okc_session`，httpOnly） | 管理后台，前后端同源部署 |
+
+API 密钥的明文形如 `kl_xxxxxxxx`。前缀只是给人看的，认证按整串的哈希查表、
+从不校验前缀 —— 因此**早先签发的 `okc_` 开头的密钥照常可用**，不必重新生成。
 | `/api/v1` | `Authorization: Bearer <api_key>` | 对外开放，供第三方调用 |
 
 ## 数据类型
@@ -75,7 +78,7 @@ body 里，而不是一半在 URL 上一半在 body 里；各种 API 客户端�
 
 ```bash
 curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
-  -H "Authorization: Bearer okc_xxx" \
+  -H "Authorization: Bearer kl_xxx" \
   -H "Content-Type: application/json" \
   -d '{"email":"alice@outlook.com","wait":30,"code_regex":"default"}'
 ```
@@ -102,21 +105,45 @@ curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
 
 主接口，在线取回最新一封。
 
+**默认立刻返回**：不传 `wait` 时，它取回此刻邮箱里最新的那封邮件，两秒左右就有结果。
+这是日常调试与大多数调用该用的形态。
+
+`wait` 是可选的长轮询：传了它，服务器会挂住连接一直等**新**邮件到达，
+最长两分钟。它服务的是"先触发对方发信、再来收码"这一种流程 ——
+请求会卡住几十秒，那是它的本意，不是超时。等满没等到就返回 204。
+
+**不要在调试时顺手加 `wait`**，更不要同时加 `subject` 过滤：
+两者一起等于"等一封主题含某词的新邮件"，邮箱里已有的邮件一封都不会返回，
+表现就是转圈几十秒然后空响应。
+
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `email` / `account_id` | 必填其一 | 定位账号 |
 | `folder` | `inbox,junk` | 取值 `inbox`、`junk`、`all`，逗号分隔 |
 | `from` / `subject` | 空 | 包含匹配，大小写不敏感 |
 | `since` | 空 | RFC 3339 或 Unix 秒，只返回晚于它的邮件 |
-| `wait` | `0` | 长轮询秒数，上限 120。间隔按 3、5、8、13、21、30 秒递增 |
+| `wait` | `0` | **默认不等，立刻返回。**传了才长轮询，上限 120 秒；轮询间隔按 3、5、8、13、21、30 秒递增 |
 | `limit` | `20` | 单次拉取封数 |
 | `body` | 带正文 | 传 `none` 可跳过正文降低开销 |
 | `code_regex` | 空 | 传 `default` 用预置的规则组（见下），或传自定义正则 |
 | `lease` | `0` | 申请租约的秒数，上限 1800。需 Key 开启 `allow_lease` |
 
+取回此刻邮箱里最新的一封（立刻返回）：
+
 ```bash
-curl -H "Authorization: Bearer okc_xxx" \
-  "https://console.example.com/api/v1/mail/latest?email=alice@outlook.com&from=noreply@example.com&wait=30&code_regex=default"
+curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
+  -H "Authorization: Bearer kl_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@outlook.com","code_regex":"default"}'
+```
+
+等一封还没到的验证码（会挂住，最多 60 秒）：
+
+```bash
+curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
+  -H "Authorization: Bearer kl_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@outlook.com","wait":60,"code_regex":"default"}'
 ```
 
 ```jsonc
@@ -177,11 +204,11 @@ HTML 会先去掉标签再匹配，`script` 与 `style` 整块丢弃，避免撞
 
 ```bash
 # 领取时带上项目标识
-curl -H "Authorization: Bearer okc_xxx" \
+curl -H "Authorization: Bearer kl_xxx" \
   "https://console.example.com/api/v1/mail/claim?project_key=siteA&lease=300"
 
 # 用完上报结局
-curl -X POST -H "Authorization: Bearer okc_xxx" -H 'Content-Type: application/json' \
+curl -X POST -H "Authorization: Bearer kl_xxx" -H 'Content-Type: application/json' \
   -d '{"result":"success","project_key":"siteA"}' \
   "https://console.example.com/api/v1/mail/complete/1024"
 ```

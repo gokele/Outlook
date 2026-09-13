@@ -72,6 +72,17 @@ func HashAPIKey(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// APIKeyPrefix 是新签发的 API Key 的固定前缀。
+//
+// 它纯粹是给人看的：认证只按整串的哈希查表，从不校验前缀。
+// 因此改动它只影响此后新建的密钥，已经发出去的老密钥照常可用 ——
+// 这也正是它可以被改的原因。
+const APIKeyPrefix = "kl_"
+
+// apiKeyDisplayLen 是界面上展示的前缀长度（含 APIKeyPrefix）。
+// 够认出是哪一把，又不足以拼出完整密钥。
+const apiKeyDisplayLen = 12
+
 // NewAPIKey 生成一个新的 API Key 明文及其前缀。前缀用于在界面上识别，明文只展示一次。
 func NewAPIKey() (full, prefix string, err error) {
 	buf := make([]byte, 24)
@@ -79,8 +90,13 @@ func NewAPIKey() (full, prefix string, err error) {
 		return "", "", err
 	}
 	body := base64.RawURLEncoding.EncodeToString(buf)
-	full = "okc_" + body
-	prefix = full[:12]
+	full = APIKeyPrefix + body
+	// 按长度截取而不是写死位置：前缀长度一改，这里就得跟着改，
+	// 而"跟着改"这件事迟早会被忘掉。
+	prefix = full
+	if len(full) > apiKeyDisplayLen {
+		prefix = full[:apiKeyDisplayLen]
+	}
 	return full, prefix, nil
 }
 

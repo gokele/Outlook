@@ -55,8 +55,16 @@ export function UserMenu({ user }: UserMenuProps) {
         手机上只留头像：顶栏就那么点地方，用户名一长就会把标题挤走，
         而"我是谁"在小屏上远不如把空间留给标题重要。点开菜单照样看得到。
       */}
-      <Button type="text" style={{ height: 40, maxWidth: '40vw' }}>
-        <Space size={8}>
+      {/*
+        nowrap 与 flexShrink 是钉死的：顶栏是个 flex 行，两侧内容一旦互相挤压，
+        按钮里的头像和用户名就可能被折成上下两行，顶穿 64px 的顶栏高度。
+        这一块永远只占一行，宁可用省略号也不换行。
+      */}
+      <Button
+        type="text"
+        style={{ height: 40, maxWidth: '40vw', flexShrink: 0, whiteSpace: 'nowrap' }}
+      >
+        <Space size={8} wrap={false} style={{ flexWrap: 'nowrap' }}>
           <Avatar size={24} icon={<UserOutlined />} />
           {isMobile ? null : (
             <Typography.Text ellipsis style={{ maxWidth: 160 }}>

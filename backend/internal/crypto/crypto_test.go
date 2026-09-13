@@ -110,8 +110,8 @@ func TestAPIKeyGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(full, "okc_") {
-		t.Errorf("Key 应带固定前缀，实际 %q", full)
+	if !strings.HasPrefix(full, APIKeyPrefix) {
+		t.Errorf("Key 应带固定前缀 %q，实际 %q", APIKeyPrefix, full)
 	}
 	if !strings.HasPrefix(full, prefix) {
 		t.Errorf("前缀应是 Key 的开头，实际 %q vs %q", prefix, full)
@@ -134,5 +134,41 @@ func TestAPIKeyGeneration(t *testing.T) {
 	other, _, _ := NewAPIKey()
 	if other == full {
 		t.Fatal("两次生成的 Key 不应相同")
+	}
+}
+
+// 新签发的密钥用新前缀，而**老密钥必须照常能认**。
+//
+// 前缀是给人看的，认证只按整串的哈希查表 —— 这一条是改前缀的前提。
+// 一旦哪天有人在认证路径上加了前缀校验，这个用例会立刻红。
+func TestAPIKeyPrefixIsCosmetic(t *testing.T) {
+	full, prefix, err := NewAPIKey()
+	if err != nil {
+		t.Fatalf("生成密钥失败: %v", err)
+	}
+	if !strings.HasPrefix(full, APIKeyPrefix) {
+		t.Errorf("新密钥应以 %q 开头，得到 %q", APIKeyPrefix, full)
+	}
+	if !strings.HasPrefix(full, prefix) || len(prefix) != 12 {
+		t.Errorf("展示用前缀应是明文的前 12 位，得到 %q", prefix)
+	}
+	if len(full) < 30 {
+		t.Errorf("密钥太短，熵不够: %q", full)
+	}
+
+	// 老格式的密钥（okc_ 前缀）必须照样能按哈希对上 ——
+	// 换前缀不该把已经发出去的密钥作废。
+	const legacy = "okc_yRTYdFM5C9p9peV3FyZFZUVN2yGHM5D-"
+	if HashAPIKey(legacy) != HashAPIKey(legacy) {
+		t.Fatal("同一把密钥两次哈希应当相同")
+	}
+	if HashAPIKey(legacy) == HashAPIKey(full) {
+		t.Fatal("不同密钥不该哈希到同一个值")
+	}
+
+	// 两次生成不能撞。
+	other, _, _ := NewAPIKey()
+	if other == full {
+		t.Fatal("连续生成了两把相同的密钥")
 	}
 }

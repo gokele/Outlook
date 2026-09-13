@@ -223,6 +223,63 @@ export const PAGE_PROBE = (isMobile) => {
     }
   }
 
+  /*
+   * 元素竖向撑破容器。
+   *
+   * 这是之前整套检查的盲区：只查了横向，于是"顶栏里的用户名折到头像下面、
+   * 顶穿 64px 的顶栏"这类问题一个都照不出来 —— 而它恰恰是最显眼的那种坏。
+   *
+   * 只看定高的容器（固定 height 或 max-height）。普通容器被内容撑高是正常的，
+   * 报出来全是噪音；定高容器装不下才是真的出事了。
+   */
+  const fixedHeightHosts = [
+    ...document.querySelectorAll('.ant-layout-header, .ant-card-head, .ant-table-thead th'),
+  ];
+  for (const host of fixedHeightHosts) {
+    const hr = host.getBoundingClientRect();
+    if (hr.height === 0) continue;
+    for (const el of host.querySelectorAll('*')) {
+      const er = el.getBoundingClientRect();
+      if (er.height === 0) continue;
+      const cs = getComputedStyle(el);
+      if (cs.position === 'absolute' || cs.position === 'fixed') continue;
+      // 留 2px 容差：抗锯齿与半像素边框会造成微小的越界。
+      if (er.bottom > hr.bottom + 2 || er.top < hr.top - 2) {
+        issues.push({
+          kind: '元素撑破容器高度',
+          detail:
+            `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]} ` +
+            `(${Math.round(er.top)}~${Math.round(er.bottom)}) 越出 ` +
+            `${host.tagName.toLowerCase()}.${(host.className || '').toString().split(' ')[0]} ` +
+            `(${Math.round(hr.top)}~${Math.round(hr.bottom)})`,
+        });
+        break;
+      }
+    }
+    if (issues.some((i) => i.kind === '元素撑破容器高度')) break;
+  }
+
+  /*
+   * 本该单行的东西折成了多行。
+   *
+   * 顶栏的用户区、卡片标题、表格表头 —— 这些位置一旦折行就会顶破版式。
+   * 判据是同一个 flex 容器里的直接子元素出现了两个不同的行位置。
+   */
+  for (const row of document.querySelectorAll(
+    '.ant-layout-header .ant-space, .ant-card-head-title, .ant-table-thead th .ant-space',
+  )) {
+    const kids = [...row.children].filter((c) => c.getBoundingClientRect().height > 0);
+    if (kids.length < 2) continue;
+    const tops = kids.map((c) => Math.round(c.getBoundingClientRect().top));
+    if (Math.max(...tops) - Math.min(...tops) > 4) {
+      issues.push({
+        kind: '应单行的内容折行了',
+        detail: `${row.className.toString().split(' ')[0]} 子项顶边 ${tops.join(',')}`,
+      });
+      break;
+    }
+  }
+
   // 文字被容器裁掉（高度不够，不是省略号那种）
   for (const el of all) {
     if (el.children.length > 0) continue;
