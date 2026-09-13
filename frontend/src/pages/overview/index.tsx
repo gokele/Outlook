@@ -20,7 +20,7 @@ export default function OverviewPage() {
       title="总览"
       description="账号池整体状态与调度器运行情况, 每 60 秒自动刷新。"
       extra={
-        <Space>
+        <Space wrap>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             更新于 {formatUnix(Math.floor(dataUpdatedAt / 1000), 'HH:mm:ss')}
           </Typography.Text>

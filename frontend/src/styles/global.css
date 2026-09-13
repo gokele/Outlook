@@ -309,3 +309,121 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------------- 小屏适配 ---------------- */
+
+/*
+ * 三档版式的收口。组件层面的断点（Grid.useBreakpoint、Col 的 xs/md/lg）
+ * 解决的是"这块内容放在第几列"，下面这些解决的是"同一块内容在小屏上
+ * 该占多少边距、长字符串该怎么断行"—— 那是成片出现的问题，
+ * 逐个组件去改既改不干净，也会在下一个新页面上重新犯一遍。
+ *
+ * 断点取 768px，与 Ant Design 的 md 一致（见 constants/layout.ts）。
+ * 两边用同一个数，组件里的判断和这里的媒体查询才不会在边界上打架。
+ */
+@media (max-width: 767px) {
+  /*
+   * 卡片内边距从 24 收到 12。
+   * 一张 375px 宽的屏幕，光左右内边距就吃掉 48px —— 表格与表单
+   * 真正能用的宽度因此少了八分之一，而那是最缺的地方。
+   */
+  .ant-card > .ant-card-body {
+    padding: 12px;
+  }
+
+  /* 弹窗同理。小屏上弹窗本来就顶到边，内边距再大就只剩一条缝装内容。 */
+  .ant-modal .ant-modal-body {
+    padding-inline: 16px;
+  }
+
+  /*
+   * 描述列表改成标签在上、值在下。
+   * 并排放时标签占掉固定宽度（详情页设的是 96px），剩给值的不到 200px，
+   * 而值恰恰是邮箱、client_id 这类长字符串 —— 结果是标签很宽松、
+   * 值被压成省略号。
+   */
+  .ant-descriptions-item-container {
+    display: block;
+  }
+  .ant-descriptions-item-label {
+    width: auto !important;
+    margin-bottom: 2px;
+  }
+  /*
+   * 值几乎都是邮箱、client_id、代理地址这类没有空格的长串。
+   * 不允许断行时它们会把所在的格子一路顶宽，最后顶穿整张卡片。
+   */
+  .ant-descriptions-item-content {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /* 页面标题区的说明文字在小屏上收一号，给标题让位 */
+  .ant-typography + .ant-typography {
+    margin-top: 2px;
+  }
+
+  /*
+   * 卡片标题行允许换行。
+   * 标题和右上角操作区默认挤在同一行里，小屏上两者互相压缩 ——
+   * 「邮件 (在线获取, 不落库)」这种标题配一个下拉加一个按钮，
+   * 在 375px 上谁都放不下。让操作区掉到下一行，两边都完整。
+   */
+  .ant-card-head-wrapper {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .ant-card-head-title {
+    white-space: normal;
+  }
+  .ant-card-extra {
+    margin-inline-start: 0;
+  }
+
+  /*
+   * 触摸目标放大到 32px。
+   *
+   * 表格行里的操作是一排 size="small" 的图标按钮，宽高约 24px ——
+   * 鼠标够用，手指不够：相邻两个按钮的中心只差 28px，而其中一个是删除。
+   * 这里只撑点击区域，不改图标大小，视觉密度保持不变。
+   */
+  .ant-table-cell .ant-btn-sm.ant-btn-icon-only {
+    min-width: 32px;
+    height: 32px;
+  }
+}
+
+/*
+ * 长字符串必须能断行。
+ *
+ * 邮箱、client_id、授权码、代理地址都是没有空格的长串，默认不断行时
+ * 它们会把所在的格子一路顶宽，进而顶宽整张表、整个卡片。这条不限小屏：
+ * 宽屏上同样会发生，只是要更长的串才触发。
+ */
+.okc-break-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/*
+ * 表格在窄屏下自己横向滚动（scroll={{x}}，见 constants/layout.ts）。
+ * 这里补两件 antd 不管的事：
+ *   - 滚动条在 iOS 上默认不占位也不显形，用户不知道右边还有内容；
+ *     给个细一点但看得见的滚动条。
+ *   - 触摸滚动用惯性，跟手一些。
+ */
+.ant-table-content,
+.ant-table-body {
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 991px) {
+  .ant-table-content::-webkit-scrollbar,
+  .ant-table-body::-webkit-scrollbar {
+    height: 6px;
+  }
+  .ant-table-content::-webkit-scrollbar-thumb,
+  .ant-table-body::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+    background: rgba(127, 127, 127, 0.35);
+  }
+}

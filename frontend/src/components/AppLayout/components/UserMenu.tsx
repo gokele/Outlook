@@ -1,6 +1,6 @@
 import { LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate } from '@tanstack/react-router';
-import { Avatar, Button, Dropdown, Space, Typography } from 'antd';
+import { Avatar, Button, Dropdown, Grid, Space, Typography } from 'antd';
 import type { AdminUser } from '@/api/types';
 import { useModal } from '@/components/modal';
 import { useLogout } from '@/hooks/useAuth';
@@ -14,6 +14,8 @@ export function UserMenu({ user }: UserMenuProps) {
   const navigate = useNavigate();
   const modal = useModal();
   const logout = useLogout();
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
 
   /** 二次确认后调用退出接口, 无论成败都回到登录页 */
   const handleLogout = async () => {
@@ -49,10 +51,18 @@ export function UserMenu({ user }: UserMenuProps) {
         },
       }}
     >
-      <Button type="text" style={{ height: 40 }}>
+      {/*
+        手机上只留头像：顶栏就那么点地方，用户名一长就会把标题挤走，
+        而"我是谁"在小屏上远不如把空间留给标题重要。点开菜单照样看得到。
+      */}
+      <Button type="text" style={{ height: 40, maxWidth: '40vw' }}>
         <Space size={8}>
           <Avatar size={24} icon={<UserOutlined />} />
-          <Typography.Text>{user?.username ?? '未登录'}</Typography.Text>
+          {isMobile ? null : (
+            <Typography.Text ellipsis style={{ maxWidth: 160 }}>
+              {user?.username ?? '未登录'}
+            </Typography.Text>
+          )}
         </Space>
       </Button>
     </Dropdown>

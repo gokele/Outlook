@@ -62,7 +62,9 @@ export function LogFilters({
         />
         <Select
           allowClear
-          style={{ width: 140 }}
+          // 不写死 140：窄屏上它不会收缩，会把后面的按钮挤下去还留一截空白。
+          // 用 flex 基准让它在有地方时保持 140、没地方时自己让位。
+          style={{ flex: '0 1 140px', minWidth: 108 }}
           placeholder="执行结果"
           value={search.result}
           options={RESULT_OPTIONS}
@@ -74,7 +76,17 @@ export function LogFilters({
         </Button>
         {/* marginLeft auto 把操作区推到最右, 中间的空白不再是浪费 */}
         {actions ? (
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          // marginInlineStart auto 把操作区推到最右；窄屏下整组换到下一行，
+          // 不再和筛选器抢同一行的宽度。
+          <div
+            style={{
+              marginInlineStart: 'auto',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
+              alignItems: 'center',
+            }}
+          >
             {actions}
           </div>
         ) : null}

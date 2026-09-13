@@ -31,7 +31,7 @@ export default function ProfilePage() {
               // height 100% 配合 align="stretch": 两张卡等高, 窄的那张不会短一截。
               style={{ height: '100%', animationDelay: '80ms' }}
               title={
-                <Space size={8}>
+                <Space wrap size={8}>
                   <IdcardOutlined />
                   <span>修改登录名</span>
                 </Space>
@@ -46,7 +46,7 @@ export default function ProfilePage() {
               className="okc-rise"
               style={{ height: '100%', animationDelay: '160ms' }}
               title={
-                <Space size={8}>
+                <Space wrap size={8}>
                   <KeyOutlined />
                   <span>修改密码</span>
                 </Space>

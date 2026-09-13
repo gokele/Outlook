@@ -106,7 +106,7 @@ export default function UpdatePage() {
       title="在线更新"
       description="从 GitHub 拉取新版本，校验后自动替换并重启。"
       extra={
-        <Space size={8}>
+        <Space wrap size={8}>
           {dataUpdatedAt ? (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               上次检查 {formatUnix(Math.floor(dataUpdatedAt / 1000), 'HH:mm:ss')}
@@ -146,7 +146,7 @@ export default function UpdatePage() {
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   当前版本
                 </Typography.Text>
-                <Space size={8} align="center">
+                <Space size={8} align="center" wrap>
                   <Typography.Title
                     level={4}
                     style={{ margin: 0, fontFamily: 'var(--app-font-mono)' }}

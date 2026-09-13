@@ -128,7 +128,7 @@ export default function ApiKeysPage() {
       title="API 密钥"
       description="供外部系统调用账号池的凭据。按分类限定范围, 并可单独控制限速、IP 白名单与高危权限。"
       extra={
-        <Space>
+        <Space wrap>
           <Button icon={<CodeOutlined />} onClick={handleShowExamples}>
             调用示例
           </Button>

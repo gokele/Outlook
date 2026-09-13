@@ -265,7 +265,7 @@ export default function ProxiesPage() {
       title="出口代理"
       description="账号与出口 IP 粘性绑定, 同一账号始终从同一 IP 出网。轮换 IP 本身就是风控信号。"
       extra={
-        <Space>
+        <Space wrap>
           <Button
             icon={<PlusOutlined />}
             onClick={() => {

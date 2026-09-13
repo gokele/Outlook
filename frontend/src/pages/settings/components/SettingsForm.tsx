@@ -198,7 +198,7 @@ export function SettingsForm({ settings, saving, onSave }: SettingsFormProps) {
           </Card>
         ))}
 
-        <Space>
+        <Space wrap>
           <Button type="primary" htmlType="submit" loading={saving}>
             保存设置
           </Button>
