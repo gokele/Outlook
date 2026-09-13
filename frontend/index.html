@@ -3,7 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      viewport-fit=cover 让页面铺到刘海屏的圆角与挖孔区域下面，
+      再由 CSS 的 env(safe-area-inset-*) 把内容推回安全区（见 global.css）。
+      不加它，iOS 上安全区变量恒为 0，横屏时侧边会留两条黑边；
+      加了它而不用 safe-area，内容又会被刘海压住 —— 两者必须成对出现。
+
+      没有 maximum-scale / user-scalable=no：禁掉缩放会让视力不便的人
+      没法放大页面，而那正是他们唯一的办法。
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="robots" content="noindex, nofollow" />
     <title>Outlook 账号池管理后台</title>
   </head>

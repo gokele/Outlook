@@ -383,13 +383,89 @@ body {
   /*
    * 触摸目标放大到 32px。
    *
-   * 表格行里的操作是一排 size="small" 的图标按钮，宽高约 24px ——
-   * 鼠标够用，手指不够：相邻两个按钮的中心只差 28px，而其中一个是删除。
-   * 这里只撑点击区域，不改图标大小，视觉密度保持不变。
+   * size="small" 的按钮实际高度是 24px —— 鼠标够用，手指不够：
+   * 相邻两个按钮的中心只差 28px，而其中一个往往是删除。
+   * 批量操作条、表格行操作、卡片右上角的次要按钮全是这个尺寸。
+   *
+   * 只撑点击区域，不改字号与图标大小，视觉密度保持不变。
    */
-  .ant-table-cell .ant-btn-sm.ant-btn-icon-only {
+  .ant-btn-sm {
+    min-height: 32px;
+  }
+  .ant-btn-sm.ant-btn-icon-only {
+    min-width: 32px;
+  }
+
+  /*
+   * 分页控件同样撑到 32px。
+   *
+   * 上一页/下一页是 24×24 的箭头，而手机上翻页只能靠它们 ——
+   * 桌面端还能改每页条数、直接跳页，小屏上那些控件本来就挤掉了。
+   * 最常用的操作反而是最难点中的那个。
+   */
+  .ant-pagination .ant-pagination-item,
+  .ant-pagination .ant-pagination-prev,
+  .ant-pagination .ant-pagination-next,
+  .ant-pagination .ant-pagination-jump-prev,
+  .ant-pagination .ant-pagination-jump-next,
+  .ant-pagination.ant-pagination-mini .ant-pagination-item,
+  .ant-pagination.ant-pagination-mini .ant-pagination-prev,
+  .ant-pagination.ant-pagination-mini .ant-pagination-next,
+  .ant-pagination.ant-pagination-mini .ant-pagination-jump-prev,
+  .ant-pagination.ant-pagination-mini .ant-pagination-jump-next {
     min-width: 32px;
     height: 32px;
+    line-height: 30px;
+  }
+  .ant-pagination .ant-pagination-item-link,
+  .ant-pagination.ant-pagination-mini .ant-pagination-item-link {
+    min-width: 32px;
+    height: 32px;
+  }
+
+  /*
+   * 数字输入框的上下步进器在手机上直接去掉。
+   *
+   * 它们只有 1px 宽、15px 高，手指根本点不中；而输入框本身可以直接键入，
+   * 步进器在这里没有提供任何别的路径。留着只是两个点不中的热区，
+   * 还会挤占本来就不宽的输入区。
+   */
+  .ant-input-number .ant-input-number-handler-wrap {
+    display: none;
+  }
+
+  /*
+   * 开关的点击区域补到 32px 高。
+   *
+   * antd 的开关是 44×22，宽度够、高度差一截。直接改高度会把它拉变形，
+   * 所以用一个透明的伪元素向上下各撑 5px —— 视觉一模一样，手指好点得多。
+   */
+  .ant-switch {
+    position: relative;
+  }
+  .ant-switch::after {
+    content: '';
+    position: absolute;
+    inset-block: -5px;
+    inset-inline: 0;
+  }
+
+  /*
+   * 表格与列表里的独立链接撑到 32px。
+   *
+   * 账号列表每行的邮箱就是进详情页的入口，而它作为行内元素只有 22px 高 ——
+   * 一行 38px 里只有中间那 22px 能点中，手指落在上下边缘就没反应。
+   * 撑到 32px 后整行几乎都是热区，行高本身不变。
+   *
+   * 正文句子里的行内链接不动：把它们撑高会把段落行距顶乱，
+   * 而 WCAG 2.5.5 对句子中的行内链接本来就留了例外。
+   */
+  .ant-table-cell > a,
+  .ant-table-cell .ant-space-item > a,
+  .ant-list-item a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
   }
 }
 
@@ -426,4 +502,138 @@ body {
     border-radius: 3px;
     background: rgba(127, 127, 127, 0.35);
   }
+}
+
+/* ---------------- 弹窗与抽屉 ---------------- */
+
+/*
+ * 弹窗高过屏幕时，内容区滚动、头尾固定。
+ *
+ * 这不是视觉问题，是功能问题：320×568 上「添加出口」弹窗高 870px，
+ * 提交按钮落在 y=902 —— 完全在屏幕外，怎么划都够不到，
+ * 于是手机上根本没法新建出口。antd 默认不给弹窗设高度上限，
+ * 内容多长它就多长，多出来的部分连同底部按钮一起消失在屏幕下方。
+ *
+ * 不限小屏：笔记本把窗口拉矮同样会撞上，只是要更长的表单才触发。
+ */
+.ant-modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+}
+.ant-modal-content > .ant-modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  /* 惯性滚动，触摸设备上跟手 */
+  -webkit-overflow-scrolling: touch;
+}
+.ant-modal-content > .ant-modal-header,
+.ant-modal-content > .ant-modal-footer {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 767px) {
+  /* 小屏上弹窗几乎占满，边距只留一点，内容区才够用 */
+  .ant-modal {
+    top: 8px;
+    max-width: calc(100vw - 16px);
+    margin-inline: auto;
+    padding-bottom: 8px;
+  }
+  .ant-modal-content {
+    max-height: calc(100vh - 16px);
+  }
+
+}
+
+/*
+ * 抽屉与弹窗的关闭按钮撑到 32px。
+ *
+ * 抽屉的关闭按钮是 24×24，而它是关掉导航抽屉最直接的方式 ——
+ * 点不中就只能去点遮罩，而遮罩在窄屏上只剩很窄一条。
+ *
+ * 断点用 991 而不是 767：导航抽屉在 lg 以下就登场了（见 AppLayout），
+ * 按 767 写会让 768–991 这一整段平板宽度漏掉。
+ */
+@media (max-width: 991px) {
+  .ant-drawer-close,
+  .ant-modal-close {
+    min-width: 32px;
+    min-height: 32px;
+  }
+}
+
+/* ---------------- 刘海屏安全区 ---------------- */
+
+/*
+ * 配合 index.html 的 viewport-fit=cover 使用，两者必须成对出现。
+ *
+ * 竖屏时顶部有刘海/挖孔，横屏时左右有圆角与 Home 指示条 ——
+ * 内容铺到那些位置上就会被盖住或被圆角切掉。这几条把内容推回安全区，
+ * 在没有刘海的设备上 env() 全是 0，等于什么都没做。
+ */
+.ant-layout-header {
+  padding-inline-start: max(12px, env(safe-area-inset-left));
+  padding-inline-end: max(12px, env(safe-area-inset-right));
+}
+
+.ant-layout-content {
+  padding-inline-start: max(12px, env(safe-area-inset-left));
+  padding-inline-end: max(12px, env(safe-area-inset-right));
+  /* 底部指示条区域留白，否则最后一行内容会压在它下面 */
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+/* 抽屉从左侧滑出，左缘要避开圆角 */
+.ant-drawer-left .ant-drawer-body {
+  padding-inline-start: env(safe-area-inset-left);
+}
+
+@media (min-width: 992px) {
+  /* 宽屏没有刘海问题，恢复原本更宽松的内边距 */
+  .ant-layout-header {
+    padding-inline: 24px;
+  }
+}
+
+/* ---------------- 键盘焦点 ---------------- */
+
+/*
+ * 只用键盘操作时，必须看得出焦点在哪。
+ *
+ * antd 给按钮、开关这些都配了焦点样式，但普通链接与输入框没有 ——
+ * 实测 15 次 Tab 里有 7 次落在看不出焦点的元素上，那几步等于在盲操作。
+ *
+ * 用 :focus-visible 而不是 :focus：鼠标点击不该冒出一圈轮廓，
+ * 那是纯粹的视觉噪音；只有键盘导航时浏览器才会匹配它。
+ *
+ * outline 不占据布局空间（不像 border），因此加上它不会让任何东西移位。
+ */
+a:focus-visible,
+input.ant-input:focus-visible,
+input.ant-input-number-input:focus-visible,
+input.ant-select-selection-search-input:focus-visible,
+textarea.ant-input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline-style: solid;
+  outline-width: 2px;
+  outline-color: #1677ff;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/*
+ * 下拉框整体聚焦时，轮廓画在外壳上而不是里面那个搜索框上 ——
+ * 后者常常只有几像素宽，轮廓会缩成一个小点。
+ */
+div.ant-select:has(input:focus-visible) {
+  outline-style: solid;
+  outline-width: 2px;
+  outline-color: #1677ff;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+div.ant-select input.ant-select-selection-search-input:focus-visible {
+  outline: none;
 }
