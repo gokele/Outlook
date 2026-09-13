@@ -84,3 +84,79 @@ jobs:
       - name: 构建
         working-directory: frontend
         run: npm run build
+
+  responsive:
+    name: 响应式检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # 检查跑在真实产物上：前端嵌进 Go 二进制，单端口托管，
+      # 与生产完全一致。用 vite dev 跑虽然快，但那不是用户会看到的东西。
+      - name: 构建前端并嵌进后端
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+          rm -rf backend/web/dist
+          cp -R frontend/dist backend/web/dist
+          touch backend/web/dist/.gitkeep
+
+      - name: 启动服务
+        run: |
+          cd backend
+          CGO_ENABLED=0 go build -o /tmp/api .
+          DATABASE_URL="sqlite:///tmp/ui.db" \
+          APP_ADDR=127.0.0.1:8081 \
+          APP_ENV=dev \
+          MASTER_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+          ENV_FILE=/dev/null \
+          /tmp/api > /tmp/api.log 2>&1 &
+          # 等端口就绪，别用固定 sleep —— 机器忙的时候会不够
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8081/healthz >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8081/healthz
+
+      # 空页面照不出版式问题：表格没有行、标签没有长度。
+      # 灌的数据里刻意掺了超长邮箱与超长备注 —— 那才是把布局顶坏的内容。
+      - name: 灌入测试数据
+        working-directory: frontend
+        env:
+          BASE_URL: http://127.0.0.1:8081
+        run: |
+          PASS=$(grep -o '"password":"[^"]*"' /tmp/api.log | head -1 | cut -d'"' -f4)
+          echo "::add-mask::$PASS"
+          ADMIN_PASS="$PASS" npm run seed:responsive
+
+      - name: 响应式检查
+        working-directory: frontend
+        env:
+          BASE_URL: http://127.0.0.1:8081
+          OUT_DIR: /tmp/responsive-shots
+          # runner 镜像预装了 Chrome，不必再下载 playwright 自带的那份
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          PASS=$(grep -o '"password":"[^"]*"' /tmp/api.log | head -1 | cut -d'"' -f4)
+          echo "::add-mask::$PASS"
+          ADMIN_PASS="$PASS" npm run check:responsive
+
+      # 失败时把截图带出来。光看一行"某某越界"很难判断到底歪成什么样。
+      - name: 上传截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: responsive-shots
+          path: /tmp/responsive-shots
+          retention-days: 7
