@@ -110,7 +110,7 @@ curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
 
 `wait` 是可选的长轮询：传了它，服务器会挂住连接一直等**新**邮件到达，
 最长两分钟。它服务的是"先触发对方发信、再来收码"这一种流程 ——
-请求会卡住几十秒，那是它的本意，不是超时。等满没等到就返回 204。
+请求会卡住几十秒，那是它的本意，不是超时。等满没等到，见下方「没取到邮件时」。
 
 **不要在调试时顺手加 `wait`**，更不要同时加 `subject` 过滤：
 两者一起等于"等一封主题含某词的新邮件"，邮箱里已有的邮件一封都不会返回，
@@ -161,6 +161,39 @@ curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
   }
 }
 ```
+
+#### 没取到邮件时
+
+**返回 200，不是 204。** 从 v0.5.0 起改的，理由是 204 的语义是「无内容」——
+HTTP 规定它的响应体必须为空，于是调用方拿到一片空白，和超时、和接口挂了
+长得一模一样。而「过滤条件内没有匹配的邮件」是一次**成功**的查询，只是结果为空。
+
+```jsonc
+{
+  "code": 200, "message": "NO_MESSAGE: …", "request_id": "req_…",
+  "data": {
+    "found": false,                 // 取到时为 true，判这一个字段就够
+    "reason": "没有符合条件的邮件（等待了 30 秒、主题含 \"verification\"）。这是长轮询等满后的正常结果，不是超时，也不是接口出错",
+    "waited_seconds": 30,           // 只有用了 wait 才有
+    "scanned": 3,                   // 扫过几封但都不匹配
+    "folder_coverage": ["inbox", "junk"],
+    "channel_used": "imap",
+    "account": { "id": 1024, "email": "alice@outlook.com" },
+    "messages": [],                 // 形状与取到时一致，不必写两套解析
+    "message": null,
+    "code": null
+  }
+}
+```
+
+`scanned` 能立刻区分两种完全不同的处境：**0** 是邮箱里本来就空，
+**大于 0** 是有邮件但被你的过滤条件全挡掉了。
+
+**绝不会退而求其次返回一封旧邮件。** 等新验证码时，一封旧邮件里的旧验证码
+看起来和新的一模一样，调用方分辨不出来 —— 那比直接说"没有"危险得多。
+要邮箱里现有的邮件，就不要传 `wait`。
+
+**升级注意**：原先按 `204` 判空的调用方要改成判 `data.found`（或 `data.message === null`）。
 
 **`code_regex=default` 是一组带优先级的规则**，不是单条正则。按证据强度依次尝试：
 
@@ -224,7 +257,7 @@ curl -X POST -H "Authorization: Bearer kl_xxx" -H 'Content-Type: application/jso
 
 | HTTP | code | 含义与处理 |
 |---|---|---|
-| 204 | `NO_MESSAGE` | 过滤条件内没有邮件，或 `wait` 超时 |
+| 200 | `NO_MESSAGE` | 过滤条件内没有邮件，或 `wait` 等满。**不是错误**，见「没取到邮件时」 |
 | 400 | `BAD_REQUEST` / `SCOPE_REQUIRED` / `BATCH_TOO_LARGE` | 参数问题 |
 | 401 | `UNAUTHORIZED` | Key 缺失、错误或已吊销 |
 | 403 | `SCOPE_DENIED` / `LEASE_DENIED` / `EXPORT_DENIED` / `IP_DENIED` | 权限不足 |

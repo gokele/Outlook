@@ -17,12 +17,16 @@ package httpapi
 //     更早的一封邮件里的旧验证码。
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gokele/Outlook/internal/fetcher"
+	"github.com/gokele/Outlook/internal/model"
 )
 
 // apiKey 建一把可用的开放 API 密钥，权限开满，方便逐个端点走一遍。
@@ -381,4 +385,102 @@ func TestV1MalformedBodyPassesThrough(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("非法 JSON 应由处理器报 400，实际 %d：%s", w.Code, w.Body.String())
 	}
+}
+
+// 没取到邮件时必须把话说清楚，而不是回一个空白的 204。
+//
+// 204 的语义是"无内容"，HTTP 规定它的响应体必须为空 —— 于是调用方拿到的
+// 是一片空白，和超时、和接口挂了长得一模一样。这正是长轮询最容易被当成
+// 故障的原因。而"过滤条件内没有匹配的邮件"是一次成功的查询，只是结果为空。
+func TestNoMessageIsExplicit(t *testing.T) {
+	e := newEnvWithFetchers(t, emptyFetcher{})
+	key := e.apiKey(t)
+	e.seedAccount(t, "empty@o.com", "TOKEN")
+
+	code, env := e.do(t, "POST", "/api/v1/mail/latest",
+		map[string]any{"email": "empty@o.com", "subject": "不可能匹配的主题"}, nil, key)
+
+	if code == http.StatusNoContent {
+		t.Fatal("不该再用 204：它的响应体必须为空，等于什么都没说")
+	}
+	if code != http.StatusOK {
+		t.Fatalf("没取到邮件是成功的查询，应返回 200，实际 %d（%s）", code, env.Message)
+	}
+
+	d, _ := env.Data.(map[string]any)
+	if d == nil {
+		t.Fatal("必须带上响应体")
+	}
+	if found, _ := d["found"].(bool); found {
+		t.Error("没取到时 found 应为 false")
+	}
+	reason, _ := d["reason"].(string)
+	if reason == "" {
+		t.Error("必须说清楚为什么没取到")
+	}
+	// 说明里要点出实际用的过滤条件，否则调用方无从判断是自己筛没了还是邮箱空。
+	if !strings.Contains(reason, "不可能匹配的主题") {
+		t.Errorf("说明里应点出生效的过滤条件：%q", reason)
+	}
+	// 形状要与取到时一致，调用方不必写两套解析。
+	for _, f := range []string{"messages", "message", "code", "account", "folder_coverage"} {
+		if _, ok := d[f]; !ok {
+			t.Errorf("没取到时也应保持字段 %q，形状要和取到时一致", f)
+		}
+	}
+	// 绝不拿旧邮件充数。
+	if msgs, _ := d["messages"].([]any); len(msgs) != 0 {
+		t.Errorf("没取到就该是空列表，不能退而求其次返回旧邮件，实际 %d 封", len(msgs))
+	}
+	if d["message"] != nil {
+		t.Error("没取到时 message 必须是 null")
+	}
+	if d["code"] != nil {
+		t.Error("没取到时不该给出验证码")
+	}
+}
+
+// 长轮询等满后的说明要专门点破"这不是超时"。
+func TestNoMessageAfterWaitSaysItIsNormal(t *testing.T) {
+	e := newEnvWithFetchers(t, emptyFetcher{})
+	key := e.apiKey(t)
+	e.seedAccount(t, "waited@o.com", "TOKEN")
+
+	// wait=1 让它很快等满，不拖慢用例。
+	code, env := e.do(t, "POST", "/api/v1/mail/latest",
+		map[string]any{"email": "waited@o.com", "wait": 1}, nil, key)
+	if code != http.StatusOK {
+		t.Fatalf("应返回 200，实际 %d（%s）", code, env.Message)
+	}
+	d, _ := env.Data.(map[string]any)
+	reason, _ := d["reason"].(string)
+	if !strings.Contains(reason, "等待了 1 秒") {
+		t.Errorf("说明里应写明等了多久：%q", reason)
+	}
+	if !strings.Contains(reason, "不是超时") {
+		t.Errorf("长轮询等满是最容易被当成故障的结果，说明里要点破：%q", reason)
+	}
+	if w, _ := d["waited_seconds"].(float64); int(w) != 1 {
+		t.Errorf("应回带 waited_seconds，实际 %v", d["waited_seconds"])
+	}
+}
+
+// emptyFetcher 是一条永远取不到邮件的通道。
+//
+// 测试环境里本来一条通道都没有，于是取件走的是"没有可用通道"（502），
+// 永远碰不到"通道正常但没有匹配邮件"这条路 —— 而那才是长轮询等满、
+// 以及过滤条件筛空时的真实结局，也正是最需要把话说清楚的那一种。
+type emptyFetcher struct{}
+
+func (emptyFetcher) Channel() model.Channel                               { return model.ChannelGraph }
+func (emptyFetcher) Probe(context.Context, fetcher.Account, string) error { return nil }
+func (emptyFetcher) FetchLatest(context.Context, fetcher.Account, string,
+	[]model.Folder, int, int64, bool) ([]fetcher.Message, error) {
+	return nil, nil
+}
+func (emptyFetcher) Raw(context.Context, fetcher.Account, string, string) ([]byte, error) {
+	return nil, nil
+}
+func (emptyFetcher) SupportedFolders() []model.Folder {
+	return []model.Folder{model.FolderInbox, model.FolderJunk}
 }

@@ -186,7 +186,7 @@ func (s *Server) handleMailLatest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res == nil || res.Latest == nil {
-		writeStatus(w, r, http.StatusNoContent, "NO_MESSAGE", "过滤条件内没有邮件", nil)
+		s.writeNoMessage(w, r, acc, req, res)
 		return
 	}
 	writeJSON(w, r, s.mailPayloadFor(apiKeyOf(r), acc, res, leaseInfo))
@@ -211,7 +211,7 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res == nil {
-		writeStatus(w, r, http.StatusNoContent, "NO_MESSAGE", "过滤条件内没有邮件", nil)
+		s.writeNoMessage(w, r, acc, req, res)
 		return
 	}
 	writeJSON(w, r, s.mailPayloadFor(apiKeyOf(r), acc, res, nil))
@@ -336,10 +336,14 @@ func (s *Server) mailPayloadFor(key *model.APIKey, acc *model.Account,
 		out["lease"] = lease
 	}
 	if res == nil {
+		out["found"] = false
 		out["messages"] = []any{}
 		out["folder_coverage"] = []string{}
 		return out
 	}
+	// found 与没取到时的 false 成对：调用方判一个布尔就够，
+	// 不必去猜 message 是 null 还是字段没返回。
+	out["found"] = res.Latest != nil
 	out["channel_used"] = res.ChannelUsed
 	out["folder_coverage"] = res.FolderCoverage
 	out["token_tier"] = res.TokenTier
@@ -609,4 +613,68 @@ func stripBodies(in []fetcher.Message) []fetcher.Message {
 		out[i] = stripBody(m)
 	}
 	return out
+}
+
+// writeNoMessage 回应「这次没取到邮件」。
+//
+// **不用 204。** 204 的语义是"无内容"，HTTP 规定它的响应体必须为空，Go 也会
+// 把写进去的东西丢掉 —— 于是调用方拿到的是一片空白，和超时、和接口挂了
+// 长得一模一样。而"过滤条件内没有匹配的邮件"是一次**成功**的查询，
+// 只是结果为空，它该把话说清楚：等了多久、按什么条件筛的、扫过几封。
+//
+// 没取到时绝不退而求其次返回一封旧邮件。等新验证码的场景里，
+// 一封旧邮件里的旧验证码看起来和新的一模一样，调用方分辨不出来 ——
+// 那比直接说"没有"危险得多。
+func (s *Server) writeNoMessage(w http.ResponseWriter, r *http.Request,
+	acc *model.Account, req orchestrator.Request, res *orchestrator.Response) {
+	var conds []string
+	if req.Wait > 0 {
+		conds = append(conds, fmt.Sprintf("等待了 %d 秒", int(req.Wait/time.Second)))
+	}
+	if req.From != "" {
+		conds = append(conds, fmt.Sprintf("发件人含 %q", req.From))
+	}
+	if req.Subject != "" {
+		conds = append(conds, fmt.Sprintf("主题含 %q", req.Subject))
+	}
+	if req.Since > 0 {
+		conds = append(conds, fmt.Sprintf("只要 %s 之后到达的",
+			time.Unix(req.Since, 0).Format(time.RFC3339)))
+	}
+
+	reason := "邮箱里没有邮件"
+	if len(conds) > 0 {
+		reason = "没有符合条件的邮件（" + strings.Join(conds, "、") + "）"
+	}
+	// 长轮询专门给一句更直白的：这是最容易被当成故障的那种结果。
+	if req.Wait > 0 {
+		reason += "。这是长轮询等满后的正常结果，不是超时，也不是接口出错"
+	}
+
+	out := map[string]any{
+		"found":  false,
+		"reason": reason,
+		"account": map[string]any{
+			"id":    acc.ID,
+			"email": acc.Email,
+		},
+		// 形状与取到时保持一致，调用方不必为两种结果写两套解析。
+		"messages": []any{},
+		"message":  nil,
+		"code":     nil,
+	}
+	if req.Wait > 0 {
+		out["waited_seconds"] = int(req.Wait / time.Second)
+	}
+	if res != nil {
+		out["folder_coverage"] = res.FolderCoverage
+		out["channel_used"] = res.ChannelUsed
+		// 扫过几封但都不匹配 —— 这个数字能立刻区分"邮箱是空的"
+		// 与"有邮件但被过滤条件全挡掉了"，而两者的处置完全不同。
+		out["scanned"] = len(res.Messages)
+	} else {
+		out["folder_coverage"] = []string{}
+		out["scanned"] = 0
+	}
+	writeStatus(w, r, http.StatusOK, "NO_MESSAGE", reason, out)
 }

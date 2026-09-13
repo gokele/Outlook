@@ -35,6 +35,16 @@ type testEnv struct {
 
 func newEnv(t *testing.T) *testEnv {
 	t.Helper()
+	return newEnvWithFetchers(t)
+}
+
+// newEnvWithFetchers 与 newEnv 相同，但可以注入取件通道。
+//
+// 默认一条通道都没有，于是任何取件都走"没有可用通道"这条错误路径 ——
+// 那让"通道正常、只是没有匹配邮件"这一整类结局无法被测到，
+// 而它恰恰是长轮询等满与过滤筛空时的真实结果。
+func newEnvWithFetchers(t *testing.T, fs ...fetcher.Fetcher) *testEnv {
+	t.Helper()
 	st := storetest.New(t, "api")
 	ctx := context.Background()
 	box, _ := crypto.New([]byte("0123456789abcdef0123456789abcdef"))
@@ -43,9 +53,19 @@ func newEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Tenant: "consumers", Dev: true, RotateAfter: 60 * 24 * time.Hour}
-	oa := oauth.New(nil)
+	// 令牌端点指向本地桩，绝不打真实的微软接口。
+	//
+	// 用例里的授权码都是编的，拿去换令牌只会收到 AADSTS 报错 ——
+	// 而那意味着每跑一次测试就往外发一次请求：慢、看网络脸色、
+	// 还会让"通道正常但没有匹配邮件"这类用例永远走不到。
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"AT","token_type":"Bearer","expires_in":3599,"refresh_token":"NEW"}`))
+	}))
+	t.Cleanup(tokenSrv.Close)
+	oa := oauth.NewForTest(tokenSrv.Client(), tokenSrv.URL+"/%s/oauth2/v2.0/token")
 	ts := tokensvc.New(st, box, oa, tokensvc.DefaultConfig())
-	orch := orchestrator.New(st, ts, []fetcher.Fetcher{}, orchestrator.DefaultConfig())
+	orch := orchestrator.New(st, ts, fs, orchestrator.DefaultConfig())
 	sch := scheduler.New(st, ts, scheduler.DefaultConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := New(cfg, st, box, ts, orch, sch, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return &testEnv{srv: srv, h: srv.Handler(), st: st, box: box, pass: "secret123"}
