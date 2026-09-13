@@ -18,6 +18,7 @@ import { formatUnix } from '@/utils/time';
 import { GroupFormModal } from './components/GroupFormModal';
 import { ProxyFormModal } from './components/ProxyFormModal';
 import { useProxies, useProxyGroups, useProxyMutations } from './hooks/useProxies';
+import { MIN_TABLE_WIDTH, MIN_WIDE_TABLE_WIDTH } from '@/constants/layout';
 
 const FAILOVER_TEXT: Record<string, string> = {
   none: '不转移',
@@ -321,6 +322,9 @@ export default function ProxiesPage() {
               dataSource={proxies}
               pagination={false}
               tableLayout="fixed"
+              // 这张表列多、信息密，固定列宽合计超过 1000。
+              // 窄屏下自己横向滚动，而不是被整页的 overflow-x 切掉右半边。
+              scroll={{ x: MIN_WIDE_TABLE_WIDTH }}
             />
           </QueryStateView>
         </Card>
@@ -343,6 +347,7 @@ export default function ProxiesPage() {
             </div>
           ) : (
             <Table<ProxyGroup>
+              scroll={{ x: MIN_TABLE_WIDTH }}
               rowKey={(g) => String(g.id)}
               size="small"
               columns={groupColumns}

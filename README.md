@@ -61,10 +61,14 @@ carol@outlook.com----Pa55word----9e5f94bc-…----M.C528_BAY.0.U.-Xy2…----carol
 
 前缀 `/api/v1`，请求头 `Authorization: Bearer <api_key>`。
 
+全部端点都收 `POST`，参数写在 JSON 请求体里；读取类端点同时保留 `GET`。
+
 ```bash
 # 取最新一封，等待新邮件最多 30 秒，顺便提取验证码
-curl -H "Authorization: Bearer okc_xxx" \
-  "https://console.example.com/api/v1/mail/latest?email=alice@outlook.com&from=noreply@example.com&wait=30&code_regex=default"
+curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
+  -H "Authorization: Bearer okc_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@outlook.com","from":"noreply@example.com","wait":30,"code_regex":"default"}'
 ```
 
 响应里的 `folder_coverage` 说明本次实际覆盖了哪些文件夹。降级到 POP3 时只有 `["inbox"]`，意味着看不到垃圾邮件，结果可能不完整。

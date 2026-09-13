@@ -184,24 +184,53 @@ func (s *Server) Handler() http.Handler {
 		})
 	})
 
+	// 开放 API。
+	//
+	// **每个端点都收 POST，参数写在 JSON 请求体里**，这是对外的主口径：
+	// 一个接口收 POST，参数就该在 body 里，而不是一半在 URL 上一半在 body 里。
+	// 各种 API 客户端（Apifox、Postman）默认也是按这个形态工作的。
+	//
+	// 读取类端点同时保留 GET。删掉它没有任何好处，只会打断已经在用的调用方，
+	// 而多一条路的成本是零 —— 两条路进的是同一个处理器，参数解析、校验与
+	// 默认值都只有一套代码，不存在"一条路校验了、另一条忘了"的错位。
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.requireAPIKey)
+		// 把 JSON 请求体里的字段并进查询参数，处理器那边无需区分来路。
+		r.Use(jsonParamsMiddleware)
+
+		// 取件与领号。
+		r.Post("/mail/latest", s.handleMailLatest)
 		r.Get("/mail/latest", s.handleMailLatest)
+		r.Post("/mail/list", s.handleMailList)
 		r.Get("/mail/list", s.handleMailList)
+		// 领号是这组里唯一"读写混在一起"的：既取邮件，又从池子里挑一个账号
+		// 加上独占租约。后者是实打实的状态变更 —— 调用两次就占掉两个账号。
+		r.Post("/mail/claim", s.handleMailClaim)
 		r.Get("/mail/claim", s.handleMailClaim)
+		r.Post("/mail/raw", s.handleMailRaw)
 		r.Get("/mail/raw", s.handleMailRaw)
+		r.Post("/mail/export", s.handleMailExport)
 		r.Get("/mail/export", s.handleMailExport)
+
+		// 租约收尾。
 		r.Delete("/mail/lease/{id}", s.handleReleaseLease)
+		r.Post("/mail/lease/{id}/release", s.handleReleaseLease)
 		// 收尾上报：比单纯释放多做两件事 —— 成功时在项目维度记账，
 		// 失败时给账号加冷却，避免它立刻被下一个调用方拿到又失败一次。
 		r.Post("/mail/complete/{id}", s.handleCompleteLease)
+
+		// 账号。
+		r.Post("/accounts/list", s.handleAPIListAccounts)
 		r.Get("/accounts", s.handleAPIListAccounts)
+		r.Post("/accounts/export", s.handleExportAccounts)
 		r.Get("/accounts/export", s.handleExportAccounts)
 		r.Post("/accounts/import", s.handleImport)
 		r.Patch("/accounts/{id}", s.handlePatchAccount)
+		r.Post("/accounts/{id}/update", s.handlePatchAccount)
 		r.Post("/accounts/{id}/verify", s.handleVerifyAccount)
 		r.Post("/accounts/batch/verify", s.handleBatchVerify)
 		r.Delete("/accounts/{id}", s.handleDeleteAccount)
+		r.Post("/accounts/{id}/delete", s.handleDeleteAccount)
 	})
 
 	// 前端。放在最后作为兜底：所有没被上面路由认领的路径都交给单页应用，

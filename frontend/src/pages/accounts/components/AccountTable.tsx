@@ -6,6 +6,7 @@ import type { AccountRowActions } from './columns';
 import { COLUMN_BUDGET, RESERVED_WIDTH } from './columns';
 import { useVisibleColumns } from '../hooks/useVisibleColumns';
 import { buildAccountColumns } from './columns';
+import { MIN_TABLE_WIDTH } from '@/constants/layout';
 
 interface AccountTableProps {
   items: Account[];
@@ -45,8 +46,14 @@ export function AccountTable({
     <div ref={ref}>
       <Table<Account>
       rowKey={(record) => String(record.id)}
-      // 固定布局: 列宽严格受控, 长文本靠省略号收缩, 表格始终撑满容器不横向滚动
+      // 固定布局: 列宽严格受控, 长文本靠省略号收缩。
       tableLayout="fixed"
+      /*
+        次要列会按容器实际宽度依次让位（见 useVisibleColumns），但让到底也还有
+        勾选框 + 邮箱 + 状态 + 操作这几列，合计仍在 500px 以上。手机上装不下，
+        于是需要一个地板：低于它就横向滚动，而不是被整页的 overflow-x 切掉。
+      */
+      scroll={{ x: MIN_TABLE_WIDTH }}
       size="small"
       loading={loading}
       dataSource={items}

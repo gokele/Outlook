@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { Button, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { Category } from '@/api/types';
+import { MIN_TABLE_WIDTH } from '@/constants/layout';
 
 interface CategoryTableProps {
   categories: Category[];
@@ -161,6 +162,8 @@ export function CategoryTable({
       dataSource={categories}
       pagination={false}
       tableLayout="fixed"
+      // 理由同其它表格：窄屏下横向滚动，而不是被整页的 overflow-x 切掉。
+      scroll={{ x: MIN_TABLE_WIDTH }}
     />
   );
 }

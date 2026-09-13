@@ -3,6 +3,7 @@ import type { ColumnsType } from 'antd/es/table';
 import type { Overview, SuspendedClient } from '@/api/types';
 import { CopyableText } from '@/components/common/CopyableText';
 import { formatCountdown, formatUnix } from '@/utils/time';
+import { MIN_COMPACT_TABLE_WIDTH } from '@/constants/layout';
 
 interface SuspendedClientsProps {
   data: Overview;
@@ -54,6 +55,7 @@ export function SuspendedClients({ data }: SuspendedClientsProps) {
           dataSource={list}
           pagination={false}
           tableLayout="fixed"
+          scroll={{ x: MIN_COMPACT_TABLE_WIDTH }}
         />
       )}
     </Card>

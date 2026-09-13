@@ -3,6 +3,7 @@ import { Button, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { APIKey, Category } from '@/api/types';
 import { formatUnix } from '@/utils/time';
+import { MIN_WIDE_TABLE_WIDTH } from '@/constants/layout';
 
 /** 正在执行中的操作, 用于对应按钮的 loading 态 */
 export interface ApiKeyPendingAction {
@@ -224,6 +225,10 @@ export function ApiKeyTable({
       dataSource={items}
       pagination={false}
       tableLayout="fixed"
+      // 窄于这个宽度就让表格自己横向滚动。
+      // 没有它，固定列宽合计（约 1020px）会在手机上把右半边顶出视口，
+      // 而整页的 overflow-x: hidden 会把它直接切掉——内容还在，却永远够不到。
+      scroll={{ x: MIN_WIDE_TABLE_WIDTH }}
       rowClassName={(record) => (record.revoked_at > 0 ? 'row-disabled' : '')}
     />
   );

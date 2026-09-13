@@ -46,33 +46,47 @@ func (e *testEnv) apiKey(t *testing.T) string {
 	return key
 }
 
-// v1Route 是一个对外端点的契约：路径、允许的方法、以及它拒绝的那些方法。
+// v1Route 是一个对外端点的契约：路径、它接受的方法、以及它必须拒绝的方法。
 type v1Route struct {
-	name   string
-	method string
+	name string
+	// accept 是这条路径接受的全部方法。第一个是主口径（对外文档用的那个）。
+	accept []string
 	path   string
-	// wrong 是几个应当被拒绝的方法。写死而不是遍历全部方法，
+	// reject 是几个应当被拒绝的方法。写死而不是遍历全部方法，
 	// 是为了避免把 HEAD、OPTIONS 这类由框架另行处理的方法也算进来。
-	wrong []string
+	reject []string
 }
+
+// primary 返回对外文档里写的那个方法。
+func (r v1Route) primary() string { return r.accept[0] }
 
 // v1Routes 必须与 server.go 里 /api/v1 的路由表一一对应。
 // 少一条就意味着某个对外端点没有任何契约保障。
+//
+// 口径：**每个端点都收 POST，参数走 JSON 请求体**；读取类端点同时保留 GET，
+// 不打断已经在用的调用方。两条路进的是同一个处理器。
 var v1Routes = []v1Route{
-	{"取最新一封", "GET", "/api/v1/mail/latest?email=c@o.com", []string{"POST", "PUT"}},
-	{"取最近若干封", "GET", "/api/v1/mail/list?email=c@o.com", []string{"POST", "PUT"}},
-	{"领取账号", "GET", "/api/v1/mail/claim", []string{"POST", "PUT"}},
-	{"下载原文", "GET", "/api/v1/mail/raw?email=c@o.com&message_id=x", []string{"POST"}},
-	{"导出邮件", "GET", "/api/v1/mail/export?email=c@o.com", []string{"POST"}},
-	{"释放租约", "DELETE", "/api/v1/mail/lease/1", []string{"GET", "POST"}},
-	{"上报结局", "POST", "/api/v1/mail/complete/1", []string{"GET", "DELETE"}},
-	{"账号列表", "GET", "/api/v1/accounts", []string{"PUT"}},
-	{"账号导出", "GET", "/api/v1/accounts/export?category_id=1", []string{"POST", "PUT"}},
-	{"账号导入", "POST", "/api/v1/accounts/import", []string{"GET", "PUT"}},
-	{"改账号", "PATCH", "/api/v1/accounts/1", []string{"PUT"}},
-	{"单账号验证", "POST", "/api/v1/accounts/1/verify", []string{"GET", "PUT"}},
-	{"批量验证", "POST", "/api/v1/accounts/batch/verify", []string{"GET", "PUT"}},
-	{"删账号", "DELETE", "/api/v1/accounts/1", []string{"PUT"}},
+	{"取最新一封", []string{"POST", "GET"}, "/api/v1/mail/latest?email=c@o.com", []string{"PUT", "PATCH"}},
+	{"取最近若干封", []string{"POST", "GET"}, "/api/v1/mail/list?email=c@o.com", []string{"PUT", "PATCH"}},
+	{"领取账号", []string{"POST", "GET"}, "/api/v1/mail/claim", []string{"PUT", "PATCH"}},
+	{"下载原文", []string{"POST", "GET"}, "/api/v1/mail/raw?email=c@o.com&message_id=x", []string{"PUT", "PATCH"}},
+	{"导出邮件", []string{"POST", "GET"}, "/api/v1/mail/export?email=c@o.com", []string{"PUT", "PATCH"}},
+	{"释放租约", []string{"DELETE"}, "/api/v1/mail/lease/1", []string{"GET", "PUT"}},
+	{"释放租约(POST)", []string{"POST"}, "/api/v1/mail/lease/1/release", []string{"GET", "PUT"}},
+	{"上报结局", []string{"POST"}, "/api/v1/mail/complete/1", []string{"GET", "DELETE"}},
+	{"账号列表", []string{"GET"}, "/api/v1/accounts", []string{"PUT", "PATCH"}},
+	{"账号列表(POST)", []string{"POST"}, "/api/v1/accounts/list", []string{"GET", "PUT"}},
+	// PATCH 不在拒绝之列：/accounts/{id} 这条通配路由会把 "export" 当成 id 接住，
+	// 于是回的是 400（id 不合法）而不是 405。两者都表示"这么调不对"，
+	// 不值得为此在路由表里加一条只为报错存在的静态路由。
+	{"账号导出", []string{"POST", "GET"}, "/api/v1/accounts/export?category_id=1", []string{"PUT"}},
+	{"账号导入", []string{"POST"}, "/api/v1/accounts/import", []string{"GET", "PUT"}},
+	{"改账号", []string{"PATCH"}, "/api/v1/accounts/1", []string{"PUT"}},
+	{"改账号(POST)", []string{"POST"}, "/api/v1/accounts/1/update", []string{"GET", "PUT"}},
+	{"单账号验证", []string{"POST"}, "/api/v1/accounts/1/verify", []string{"GET", "PUT"}},
+	{"批量验证", []string{"POST"}, "/api/v1/accounts/batch/verify", []string{"GET", "PUT"}},
+	{"删账号", []string{"DELETE"}, "/api/v1/accounts/1", []string{"PUT"}},
+	{"删账号(POST)", []string{"POST"}, "/api/v1/accounts/1/delete", []string{"GET", "PUT"}},
 }
 
 // 每个对外端点都必须存在，且不能返回 404 或 405 ——
@@ -84,13 +98,16 @@ func TestV1RoutesExist(t *testing.T) {
 
 	for _, rt := range v1Routes {
 		t.Run(rt.name, func(t *testing.T) {
-			code, env := e.do(t, rt.method, rt.path, map[string]any{}, nil, key)
-			if code == http.StatusNotFound && strings.Contains(env.Message, "接口不存在") {
-				t.Fatalf("%s %s 路由不存在", rt.method, rt.path)
-			}
-			if code == http.StatusMethodNotAllowed {
-				t.Fatalf("%s %s 被判为方法不允许，路由表与文档对不上：%s",
-					rt.method, rt.path, env.Message)
+			// 声明接受的每个方法都要真的能进来。
+			for _, m := range rt.accept {
+				code, env := e.do(t, m, rt.path, map[string]any{}, nil, key)
+				if code == http.StatusNotFound && strings.Contains(env.Message, "接口不存在") {
+					t.Fatalf("%s %s 路由不存在", m, rt.path)
+				}
+				if code == http.StatusMethodNotAllowed {
+					t.Fatalf("%s %s 被判为方法不允许，路由表与文档对不上：%s",
+						m, rt.path, env.Message)
+				}
 			}
 		})
 	}
@@ -106,7 +123,7 @@ func TestV1WrongMethodIsExplicit(t *testing.T) {
 	key := e.apiKey(t)
 
 	for _, rt := range v1Routes {
-		for _, bad := range rt.wrong {
+		for _, bad := range rt.reject {
 			name := rt.name + "/" + bad
 			t.Run(name, func(t *testing.T) {
 				code, env := e.do(t, bad, rt.path, map[string]any{}, nil, key)
@@ -116,8 +133,8 @@ func TestV1WrongMethodIsExplicit(t *testing.T) {
 				if !strings.Contains(env.Message, bad) {
 					t.Errorf("提示里应点出用错的方法 %s：%s", bad, env.Message)
 				}
-				if !strings.Contains(env.Message, rt.method) {
-					t.Errorf("提示里应给出正确的方法 %s：%s", rt.method, env.Message)
+				if !strings.Contains(env.Message, rt.primary()) {
+					t.Errorf("提示里应给出正确的方法 %s：%s", rt.primary(), env.Message)
 				}
 			})
 		}
@@ -129,9 +146,11 @@ func TestV1RequiresAPIKey(t *testing.T) {
 	e := newEnv(t)
 	for _, rt := range v1Routes {
 		t.Run(rt.name, func(t *testing.T) {
-			code, _ := e.do(t, rt.method, rt.path, map[string]any{}, nil, "")
-			if code != http.StatusUnauthorized {
-				t.Fatalf("%s %s 无密钥时应返回 401，实际 %d", rt.method, rt.path, code)
+			for _, m := range rt.accept {
+				code, _ := e.do(t, m, rt.path, map[string]any{}, nil, "")
+				if code != http.StatusUnauthorized {
+					t.Fatalf("%s %s 无密钥时应返回 401，实际 %d", m, rt.path, code)
+				}
 			}
 		})
 	}
@@ -271,4 +290,95 @@ func recordResponse(h http.Handler, req *http.Request) *httptest.ResponseRecorde
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w
+}
+
+// POST 的参数必须能从 JSON 请求体里读到。
+//
+// 光把方法从 GET 换成 POST、参数还挂在 URL 上，是没改完：调用方和各种
+// API 客户端看到一个 POST 接口，默认就会把参数写进 body。读不到 body 里的
+// 参数，接口看起来能通，实际每个过滤条件都没生效 —— 比直接报错难查得多。
+func TestV1ReadsParamsFromJSONBody(t *testing.T) {
+	e := newEnv(t)
+	key := e.apiKey(t)
+	e.seedAccount(t, "body@o.com", "TOKEN")
+
+	// email 只写在 body 里。读不到就会是 400「必须提供 email 或 account_id」。
+	code, env := e.do(t, "POST", "/api/v1/mail/latest",
+		map[string]any{"email": "body@o.com"}, nil, key)
+	if code == http.StatusBadRequest && strings.Contains(env.Message, "必须提供") {
+		t.Fatalf("body 里的 email 没被读到：%s", env.Message)
+	}
+
+	// 账号不存在时应是 404，说明 email 确实被当成查询条件用了。
+	code, env = e.do(t, "POST", "/api/v1/mail/latest",
+		map[string]any{"email": "nobody@o.com"}, nil, key)
+	if code != http.StatusNotFound {
+		t.Fatalf("body 里的 email 应参与查找，期望 404，实际 %d（%s）", code, env.Message)
+	}
+}
+
+// body 里的非字符串字段要按查询参数的写法转换，否则处理器那边解析不了。
+func TestV1ConvertsJSONTypesForParams(t *testing.T) {
+	e := newEnv(t)
+	key := e.apiKey(t)
+	e.seedAccount(t, "types@o.com", "TOKEN")
+
+	// 数字不能变成 "30.000000"，数组要按逗号拼接（与 folder=inbox,junk 一致），
+	// 布尔要变成 "true"。任何一样转错，都会让这次调用的过滤条件失效。
+	code, env := e.do(t, "POST", "/api/v1/mail/list", map[string]any{
+		"email":  "types@o.com",
+		"limit":  10,
+		"folder": []string{"inbox", "junk"},
+		"body":   "none",
+	}, nil, key)
+	if code == http.StatusBadRequest {
+		t.Fatalf("合法的 body 参数被判非法：%s", env.Message)
+	}
+}
+
+// 两边都给了同一个键时以 URL 上的为准，且这条规则必须是确定的。
+func TestV1QueryBeatsBody(t *testing.T) {
+	e := newEnv(t)
+	key := e.apiKey(t)
+	e.seedAccount(t, "win@o.com", "TOKEN")
+
+	// URL 上写不存在的邮箱，body 里写存在的。以 URL 为准 ⇒ 404。
+	code, _ := e.do(t, "POST", "/api/v1/mail/latest?email=nobody@o.com",
+		map[string]any{"email": "win@o.com"}, nil, key)
+	if code != http.StatusNotFound {
+		t.Fatalf("查询参数应优先于请求体，期望 404，实际 %d", code)
+	}
+}
+
+// 中间件读过请求体之后必须把它放回去，否则既有的 POST 处理器会收到空 body。
+func TestV1BodyStillReadableByHandler(t *testing.T) {
+	e := newEnv(t)
+	key := e.apiKey(t)
+
+	code, env := e.do(t, "POST", "/api/v1/accounts/import", map[string]any{
+		"text":      "reuse@outlook.com----pw----9e5f94bc-e8a4-4e73-b8be-63364c29d753----RT",
+		"separator": "----",
+		"dry_run":   true,
+	}, nil, key)
+	if code != http.StatusOK {
+		t.Fatalf("导入应能读到请求体，实际 %d：%s", code, env.Message)
+	}
+	d, _ := env.Data.(map[string]any)
+	if total, _ := d["total"].(float64); total != 1 {
+		t.Fatalf("请求体被中间件读走了，导入看到 %v 行", d["total"])
+	}
+}
+
+// 请求体不是 JSON 时原样放行，由处理器按自己的契约报错。
+// 中间件在这里拦下来，只会让错误信息和调用方实际做错的事对不上。
+func TestV1MalformedBodyPassesThrough(t *testing.T) {
+	e := newEnv(t)
+	key := e.apiKey(t)
+
+	req := newJSONRequest("POST", "/api/v1/accounts/import",
+		strings.NewReader("{ 这不是合法 JSON"), key)
+	w := recordResponse(e.h, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("非法 JSON 应由处理器报 400，实际 %d：%s", w.Code, w.Body.String())
+	}
 }

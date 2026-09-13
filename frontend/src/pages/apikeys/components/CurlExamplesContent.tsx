@@ -15,18 +15,33 @@ const ORIGIN = typeof window === 'undefined' ? 'https://your-domain' : window.lo
 /**
  * 开放 API 调用示例, 路径与后端 /api/v1 路由一致。
  *
- * 这些命令要能被直接粘进 Apifox / Postman / Insomnia 导入, 因此有两条硬规矩:
+ * **统一用 POST，参数走 JSON 请求体。** 一个接口收 POST，参数就该在 body 里，
+ * 而不是一半在 URL 上一半在 body 里；各种 API 客户端默认也是按这个形态工作的。
+ *
+ * 示例要能被直接粘进 Apifox / Postman / Insomnia 导入, 因此还有两条硬规矩:
  *
  *   1. **不用 `$(...)` 命令替换。** 导入工具不会去执行 shell, 遇到它只会报
  *      "cURL 命令有误"。曾经这里写过 `since=$(date -u -v-10M ...)`,
  *      既导不进去, 那个 `-v-10M` 还是 macOS 专属写法, 在 Linux 上直接失败。
- *   2. **参数直接写在 URL 上, 不用 `-G --data-urlencode`。** 后者是合法 curl,
- *      但不少导入工具解析不了, 而查询串是所有工具都认的写法。
+ *   2. **不用 `-G --data-urlencode`。** 那是合法 curl, 但导入工具看到
+ *      --data-urlencode 就判定为 POST、又不支持 -G, 于是把 GET 接口发成 POST
+ *      —— 这正是曾经每个取件接口都回 405 的原因。
  *
  * 密钥用一个显眼的占位串而不是 `$API_KEY`: 变量对 shell 方便, 对导入工具
  * 却只是一段没有意义的文本, 而占位串两边都能一眼看出"这里要替换"。
  */
 const KEY_PLACEHOLDER = 'okc_PASTE_YOUR_KEY_HERE';
+
+/** 每条命令都带的两个头，抽出来避免逐条重复 */
+const HEADERS = `  -H "Authorization: Bearer ${KEY_PLACEHOLDER}" \\
+  -H "Content-Type: application/json"`;
+
+/** 生成一条 POST 示例 */
+function post(path: string, body: Record<string, unknown>, extra = ''): string {
+  return `curl -sS -X POST "${ORIGIN}${path}" \\
+${HEADERS} \\
+  -d '${JSON.stringify(body)}'${extra}`;
+}
 
 const SNIPPETS: Snippet[] = [
   {
@@ -34,45 +49,66 @@ const SNIPPETS: Snippet[] = [
     label: '取最新一封',
     description:
       '主接口。支持按发件人/主题/时间过滤, wait 为长轮询秒数 (0-120), code_regex=default 使用预置的 4-8 位数字提取; 没有命中邮件时返回 204 NO_MESSAGE。since 支持 RFC3339 时间或 Unix 秒, 格式不对会返回 400 而不是被忽略。',
-    command: `curl -sS "${ORIGIN}/api/v1/mail/latest?email=user@outlook.com&folder=inbox,junk&subject=verification&wait=30&code_regex=default" \\
-  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"`,
+    command: post('/api/v1/mail/latest', {
+      email: 'user@outlook.com',
+      folder: 'inbox,junk',
+      subject: 'verification',
+      wait: 30,
+      code_regex: 'default',
+    }),
   },
   {
     key: 'list',
     label: '取最近若干封',
     description: '一次在线取件后返回最近的多封邮件。body=none 可跳过正文, 显著减小响应体积。',
-    command: `curl -sS "${ORIGIN}/api/v1/mail/list?email=user@outlook.com&folder=inbox,junk&limit=10&body=none" \\
-  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"`,
+    command: post('/api/v1/mail/list', {
+      email: 'user@outlook.com',
+      folder: 'inbox,junk',
+      limit: 10,
+      body: 'none',
+    }),
   },
   {
     key: 'claim',
     label: '领取账号 (租约)',
     description:
-      '按分类领取一个空闲账号并加租约, 需要 Key 开启"允许租约独占"。注意: 默认只返回租约获取之后到达的邮件, 因此适合"先领号再触发注册"的流程。lease 上限 1800 秒。',
+      '按分类领取一个空闲账号并加租约, 需要 Key 开启"允许租约独占"。它既取邮件又占账号, 是这组接口里唯一读写混在一起的一个。注意: 默认只返回租约获取之后到达的邮件, 因此适合"先领号再触发注册"的流程。lease 上限 1800 秒。',
     command: `# 领号并持有 300 秒租约
-curl -sS "${ORIGIN}/api/v1/mail/claim?category_id=1&lease=300" \\
-  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"
+${post('/api/v1/mail/claim', { category_id: 1, lease: 300 })}
 
 # 用完提前释放, 让账号立刻回到可用池
-curl -sS -X DELETE "${ORIGIN}/api/v1/mail/lease/123" \\
-  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"`,
+${post('/api/v1/mail/lease/123/release', {})}`,
+  },
+  {
+    key: 'complete',
+    label: '上报使用结局',
+    description:
+      '比单纯释放多做两件事: success 时在项目维度记账 (该账号不会再被同一项目领到), fail 时给账号加冷却, 避免它立刻被下一个调用方拿到又失败一次。只有租约持有者能调用。',
+    command: post('/api/v1/mail/complete/123', {
+      result: 'success',
+      project_key: 'demo-site',
+    }),
   },
   {
     key: 'raw',
     label: '下载原文',
     description: '按 message_id 下载 .eml 原文, channel 指定用哪条通道取。',
-    command: `curl -sS "${ORIGIN}/api/v1/mail/raw?email=user@outlook.com&message_id=AAMkAG...&channel=graph" \\
-  -H "Authorization: Bearer ${KEY_PLACEHOLDER}" \\
-  -o message.eml`,
+    command: post(
+      '/api/v1/mail/raw',
+      { email: 'user@outlook.com', message_id: 'AAMkAG...', channel: 'graph' },
+      ' \\\n  -o message.eml',
+    ),
   },
   {
     key: 'export',
     label: '导出邮件',
     description:
       '一次在线取件后流式输出, 不是从库里读 (系统不存邮件)。limit 默认 50, 上限 200。',
-    command: `curl -sS "${ORIGIN}/api/v1/mail/export?email=user@outlook.com&format=csv&limit=200" \\
-  -H "Authorization: Bearer ${KEY_PLACEHOLDER}" \\
-  -o mail.csv`,
+    command: post(
+      '/api/v1/mail/export',
+      { email: 'user@outlook.com', format: 'csv', limit: 200 },
+      ' \\\n  -o mail.csv',
+    ),
   },
   {
     key: 'accounts',
@@ -80,21 +116,19 @@ curl -sS -X DELETE "${ORIGIN}/api/v1/mail/lease/123" \\
     description:
       '含令牌导出需要 Key 开启"允许导出敏感信息", 且必须带 category_id 或 status 等筛选条件, 否则返回 400 SCOPE_REQUIRED (不允许一次导出全量)。',
     command: `# 列出授权范围内的账号
-curl -sS "${ORIGIN}/api/v1/accounts?category_id=1" \\
-  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"
+${post('/api/v1/accounts/list', { category_id: 1 })}
 
 # 导出 (含 refresh_token, 必须带筛选条件)
-curl -sS "${ORIGIN}/api/v1/accounts/export?category_id=1&include_secrets=true" \\
-  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"
+${post('/api/v1/accounts/export', { category_id: 1, include_secrets: true })}
 
-# 导入与单账号验证
-curl -sS -X POST "${ORIGIN}/api/v1/accounts/import" \\
-  -H "Authorization: Bearer ${KEY_PLACEHOLDER}" \\
-  -H "Content-Type: application/json" \\
-  -d '{"text":"user@outlook.com----pass----client-id----refresh-token","separator":"----"}'
+# 导入
+${post('/api/v1/accounts/import', {
+  text: 'user@outlook.com----pass----client-id----refresh-token',
+  separator: '----',
+})}
 
-curl -sS -X POST "${ORIGIN}/api/v1/accounts/123/verify" \\
-  -H "Authorization: Bearer ${KEY_PLACEHOLDER}"`,
+# 单账号验证
+${post('/api/v1/accounts/123/verify', {})}`,
   },
 ];
 

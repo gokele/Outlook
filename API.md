@@ -68,7 +68,37 @@
 
 ## 开放 API
 
-### `GET /api/v1/mail/latest`
+### 方法与参数
+
+**全部端点都收 `POST`，参数写在 JSON 请求体里。** 一个接口收 POST，参数就该在
+body 里，而不是一半在 URL 上一半在 body 里；各种 API 客户端默认也按这个形态工作。
+
+```bash
+curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
+  -H "Authorization: Bearer okc_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@outlook.com","wait":30,"code_regex":"default"}'
+```
+
+读取类端点**同时保留 `GET`**（参数走查询串），不打断已经在用的调用方。
+两条路进的是同一个处理器，参数的解析、校验与默认值只有一套代码。
+
+请求体里的字段会并进查询参数，两边都给同一个键时**以 URL 上的为准**。
+数字按十进制输出，数组按逗号拼接（与 `folder=inbox,junk` 的既有约定一致），
+对象与嵌套结构不支持——这些端点的参数里没有嵌套的。
+
+几个只收 POST 的别名，供不方便发 `DELETE`/`PATCH` 的客户端使用：
+
+| 别名 | 等价于 |
+|---|---|
+| `POST /api/v1/accounts/list` | `GET /api/v1/accounts` |
+| `POST /api/v1/accounts/{id}/update` | `PATCH /api/v1/accounts/{id}` |
+| `POST /api/v1/accounts/{id}/delete` | `DELETE /api/v1/accounts/{id}` |
+| `POST /api/v1/mail/lease/{id}/release` | `DELETE /api/v1/mail/lease/{id}` |
+
+用错方法时返回 405，**错误信息里会写明该用什么方法**，并带上 `Allow` 头。
+
+### `POST /api/v1/mail/latest`（亦可 `GET`）
 
 主接口，在线取回最新一封。
 

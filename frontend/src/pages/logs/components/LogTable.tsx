@@ -6,6 +6,7 @@ import type { LogType } from '@/api/logs';
 import { PAGE_SIZE_OPTIONS } from '@/constants/account';
 import { formatUnix, formatUnixShort } from '@/utils/time';
 import { EllipsisText } from '@/components/common/EllipsisText';
+import { MIN_TABLE_WIDTH } from '@/constants/layout';
 
 interface LogTableProps {
   type: LogType;
@@ -242,6 +243,8 @@ export function LogTable({
       columns={columns}
       dataSource={items}
       tableLayout="fixed"
+      // 理由同其它表格：窄屏下横向滚动，而不是被整页的 overflow-x 切掉。
+      scroll={{ x: MIN_TABLE_WIDTH }}
       pagination={{
         current: page,
         pageSize: size,
