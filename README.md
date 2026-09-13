@@ -23,6 +23,9 @@ cd backend
 go run .
 # 首次启动会在日志里打印随机生成的管理员密码，形如：
 # {"level":"WARN","msg":"已创建默认管理员，请立即登录并修改密码","username":"admin","password":"..."}
+#
+# 这串密码只出现这一次。没看到或忘了，重新生成一个：
+#   go run . -reset-password admin        # 服务器上是 ./api -reset-password admin
 
 # 前端
 cd frontend
@@ -91,6 +94,16 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 ```
 
 把 `api` 拷到服务器、配好环境变量、跑起来即可。不需要 Nginx 托管静态资源；要 HTTPS 时前面挂一层反代即可。
+
+首次启动会自动建一个 `admin` 账号并把随机密码打进日志。用 systemd 起的服务
+在 `journalctl -u <服务名> | grep 已创建默认管理员` 里看。**错过了也不要紧**：
+
+```bash
+./api -reset-password admin              # 生成一个新的强密码并打印
+./api -reset-password admin:自己定的密码   # 或者直接指定
+```
+
+重设会同时踢掉该账号的全部会话。
 
 进程守护与反代按各自环境配置，仓库不提供模板 —— 它们与具体的发行版、
 反代软件和证书方案强耦合，给一份模板多半还是要改。需要注意的只有两点：

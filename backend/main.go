@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -43,6 +44,7 @@ var version = "dev"
 func main() {
 	var (
 		createUser = flag.String("create-user", "", "创建后台账号，格式 用户名:密码，创建后退出")
+		resetPass  = flag.String("reset-password", "", "重设后台账号密码，格式 用户名（自动生成）或 用户名:新密码，完成后退出")
 		showVer    = flag.Bool("version", false, "打印版本后退出")
 		envFile    = flag.String("env", config.DefaultEnvFile, "配置文件路径，不存在时只用环境变量")
 	)
@@ -80,14 +82,14 @@ func main() {
 			"说明", "库里的授权码与账号密码都用这把密钥加密。丢了它，已导入的账号全部作废，只能重新导入")
 	}
 
-	if err := run(log, *createUser); err != nil {
+	if err := run(log, *createUser, *resetPass); err != nil {
 		log.Error("启动失败", "err", err)
 		os.Exit(1)
 	}
 }
 
 // run 装配全部依赖并启动服务。
-func run(log *slog.Logger, createUser string) error {
+func run(log *slog.Logger, createUser, resetPass string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -135,9 +137,12 @@ func run(log *slog.Logger, createUser string) error {
 	}
 	warnAboutEnv(cfg, log)
 
-	// 命令行建号模式：建完即退出，用于首次部署。
+	// 命令行建号与重设密码：做完即退出，不启动服务。
 	if createUser != "" {
 		return createAdminUser(ctx, st, createUser, log)
+	}
+	if resetPass != "" {
+		return resetPassword(ctx, st, resetPass, log)
 	}
 	if err := ensureDefaultAdmin(ctx, st, log); err != nil {
 		return err
@@ -290,7 +295,10 @@ func ensureDefaultAdmin(ctx context.Context, st *store.Store, log *slog.Logger) 
 	if n > 0 {
 		return nil
 	}
-	pw := randomPassword()
+	pw, err := randomPassword()
+	if err != nil {
+		return err
+	}
 	hash, err := crypto.HashPassword(pw)
 	if err != nil {
 		return err
@@ -298,21 +306,88 @@ func ensureDefaultAdmin(ctx context.Context, st *store.Store, log *slog.Logger) 
 	if _, err := st.CreateUser(ctx, "admin", hash, "admin"); err != nil {
 		return err
 	}
-	log.Warn("已创建默认管理员，请立即登录并修改密码", "username", "admin", "password", pw)
+	log.Warn("已创建默认管理员，请立即登录并修改密码",
+		"username", "admin", "password", pw,
+		"提示", "这串密码只在这里出现一次。忘了或没看到，用 ./api -reset-password admin 重新生成一个")
 	return nil
 }
 
+// passwordCharset 排除了容易看错的字符（0/O、1/l/I），初始密码多半要靠人眼抄一遍。
+const passwordCharset = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
 // randomPassword 生成一个初始密码。
-func randomPassword() string {
-	const charset = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	b := make([]byte, 16)
-	if _, err := cryptoRandRead(b); err != nil {
-		return "changeme-please-set-a-real-password"
+//
+// 随机数取不到时返回错误，而不是退回某个写死的值。曾经的写法是失败就用
+// "changeme-please-set-a-real-password" —— 那会在一台对外服务的机器上
+// 建出一个密码人尽皆知的管理员账号，而日志里的措辞与正常情况一模一样，
+// 没有任何迹象表明出了问题。宁可起不来。
+func randomPassword() (string, error) {
+	const n = 16
+	out := make([]byte, 0, n)
+	// 拒绝采样：直接对 256 取模会让前 36 个字符比其余的多出四分之一的概率。
+	// 这里多读一点、丢掉落在尾巴上的字节，换一个真正均匀的分布。
+	limit := byte(256 / len(passwordCharset) * len(passwordCharset))
+	buf := make([]byte, n)
+	for len(out) < n {
+		if _, err := cryptoRandRead(buf); err != nil {
+			return "", fmt.Errorf("生成初始密码失败，系统随机源不可用: %w", err)
+		}
+		for _, c := range buf {
+			if c >= limit {
+				continue
+			}
+			out = append(out, passwordCharset[int(c)%len(passwordCharset)])
+			if len(out) == n {
+				break
+			}
+		}
 	}
-	for i := range b {
-		b[i] = charset[int(b[i])%len(charset)]
+	return string(out), nil
+}
+
+// resetPassword 重设某个后台账号的密码，用完即退出。
+//
+// 这条路存在的理由很实际：初始密码只在首次启动的日志里出现一次，
+// 用 systemd 起的服务尤其容易错过；日志轮转之后就彻底找不回来了。
+// 没有这个入口，人就只能去改数据库 —— 那已经超出"会用这个软件"的范畴了。
+//
+// spec 为「用户名」时自动生成一个强密码并打印；
+// 为「用户名:新密码」时用指定的密码。
+func resetPassword(ctx context.Context, st *store.Store, spec string, log *slog.Logger) error {
+	name, pw, explicit := splitOnce(spec, ':')
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("格式应为 用户名 或 用户名:新密码")
 	}
-	return string(b)
+	u, err := st.GetUserByName(ctx, name)
+	if err != nil {
+		return fmt.Errorf("找不到账号 %q，用 -create-user 新建一个: %w", name, err)
+	}
+	if !explicit || pw == "" {
+		if pw, err = randomPassword(); err != nil {
+			return err
+		}
+		explicit = false
+	}
+	hash, err := crypto.HashPassword(pw)
+	if err != nil {
+		return err
+	}
+	if err := st.UpdateUserPassword(ctx, u.ID, hash); err != nil {
+		return fmt.Errorf("写入新密码失败: %w", err)
+	}
+	// 顺带踢掉该用户的其它会话：密码重设的常见场景就是"我进不去了"，
+	// 留着旧会话等于把可能已经泄露的入口继续开着。
+	if err := st.DeleteUserSessionsExcept(ctx, u.ID, ""); err != nil {
+		log.Warn("撤销旧会话失败，请登录后手动改一次密码", "err", err)
+	}
+	if explicit {
+		log.Warn("密码已重设", "username", name, "说明", "已使用你指定的密码，其它会话已失效")
+		return nil
+	}
+	log.Warn("密码已重设", "username", name, "password", pw,
+		"说明", "这串密码只在这里出现一次，登录后请立即改成自己的")
+	return nil
 }
 
 // splitOnce 在首个分隔符处切分为两段。

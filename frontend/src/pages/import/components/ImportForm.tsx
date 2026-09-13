@@ -45,8 +45,11 @@ export function ImportForm({ loading, disabled, onPreview }: ImportFormProps) {
               邮箱----密码----clientid----授权码----辅助邮箱----辅助邮箱密码
             </Typography.Text>
             <Typography.Text type="secondary">
-              授权码即 OAuth2 refresh_token。默认分隔符为四个连字符 <Typography.Text code>----</Typography.Text>,
-              如果导入源使用其它分隔符, 可在下方修改。空行会被跳过, 其余每一行都会尝试解析。
+              这四段通常由账号提供方一并给出, 直接整段粘过来就行, 不需要自己去申请。
+              其中<Typography.Text code>clientid</Typography.Text>是微软的应用注册 ID,
+              <Typography.Text code>授权码</Typography.Text>即 OAuth2 的 refresh_token。
+              默认分隔符为四个连字符 <Typography.Text code>----</Typography.Text>,
+              导入源用了其它符号时可在下方修改。空行会被跳过, 其余每一行都会尝试解析。
             </Typography.Text>
             <Typography.Text type="secondary">
               {/*
@@ -110,6 +113,7 @@ export function ImportForm({ loading, disabled, onPreview }: ImportFormProps) {
             <Form.Item
               name="separator"
               label="字段分隔符"
+              extra={`默认 ${DEFAULT_SEPARATOR}。只有账号来源用了别的符号才需要改`}
               rules={[{ required: true, message: '请输入分隔符' }]}
             >
               <Input placeholder={DEFAULT_SEPARATOR} />
@@ -138,7 +142,15 @@ export function ImportForm({ loading, disabled, onPreview }: ImportFormProps) {
             </Form.Item>
           </Col>
           <Col xs={24} md={24} lg={6}>
-            <Form.Item name="on_duplicate" label="重复账号策略">
+            {/*
+              这三个选项的后果差别很大，尤其"更新"会覆写已有账号的凭据。
+              光看两个字看不出来，而看不出来的选项在这里意味着数据被改掉。
+            */}
+            <Form.Item
+              name="on_duplicate"
+              label="邮箱已存在时"
+              extra="跳过=保留原记录；更新=覆写授权码并重新验证；报错=整批中止"
+            >
               <Radio.Group
                 optionType="button"
                 options={[

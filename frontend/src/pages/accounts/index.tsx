@@ -1,6 +1,6 @@
 import { PlusOutlined } from '@ant-design/icons';
 import { Link, getRouteApi } from '@tanstack/react-router';
-import { Button, Card, Space } from 'antd';
+import { Button, Card, Space, Typography } from 'antd';
 import { useState } from 'react';
 import type { AccountPatch, ExportParams } from '@/api/accounts';
 import type { Account } from '@/api/types';
@@ -78,6 +78,14 @@ export default function AccountsPage() {
   const patchSearch = (patch: Partial<AccountsSearch>) => {
     void navigate({ search: (prev) => ({ ...prev, ...patch }) });
   };
+
+  // 空列表有两种截然不同的含义：池子本来就是空的（第一次用），
+  // 与筛选条件没匹配到。混成同一句话会让新手以为导入失败了，
+  // 也会让老用户忘了自己还挂着筛选。
+  const hasFilter = Boolean(
+    search.q || search.status || search.channel || search.tag || search.domain ||
+      search.category_id !== undefined,
+  );
 
   /** 重置全部筛选条件并回到第一页 */
   const resetSearch = () => {
@@ -327,10 +335,28 @@ export default function AccountsPage() {
           error={error}
           isEmpty={items.length === 0}
           emptyText={
-            <Space direction="vertical" size={8}>
-              <span>没有符合条件的账号</span>
-              <Link to="/import">去批量导入</Link>
-            </Space>
+            hasFilter ? (
+              <Space direction="vertical" size={8}>
+                <span>没有账号符合当前的筛选条件</span>
+                <Button size="small" onClick={resetSearch}>
+                  清除全部筛选
+                </Button>
+              </Space>
+            ) : (
+              <Space direction="vertical" size={8}>
+                <span>账号池还是空的</span>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  每行一个账号，按「邮箱----密码----clientid----授权码」粘贴进来即可，
+                  <br />
+                  也可以直接上传文件。导入时不会联网验证，不用担心触发风控。
+                </Typography.Text>
+                <Link to="/import">
+                  <Button type="primary" size="small">
+                    去导入账号
+                  </Button>
+                </Link>
+              </Space>
+            )
           }
           onRetry={() => void refetch()}
           skeletonRows={8}

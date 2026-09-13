@@ -186,18 +186,24 @@ curl -X POST -H "Authorization: Bearer okc_xxx" -H 'Content-Type: application/js
 失败则重放同一错误），而不是笼统地返回 429；只有参数不同的请求才会被限流，因为它确实
 需要额外访问一次邮箱。被客户端取消的请求不算一次有效结局，既不计入间隔窗口也不会被重放。
 
+## 健康检查
+
+`GET /healthz` 无需认证，服务能响应就返回 200 与 `ok`。供反向代理、容器编排与
+外部监控使用。它不检查数据库——只回答"这个进程还在不在"。
+
 ## 后台接口
 
 | 端点 | 说明 |
 |---|---|
 | `POST /api/admin/login` | `{username, password}`，成功后下发会话 Cookie。**有限速**：连续失败超过 4 次后按指数退避封禁（单 IP 最长 15 分钟，单用户名最长 60 秒），返回 429 `TOO_MANY_ATTEMPTS` 并带 `Retry-After`。封禁期内即使密码正确也会被挡——限速在校验之前生效 |
 | `POST /api/admin/logout` / `GET /api/admin/me` | 注销与取当前用户 |
-| `GET /api/admin/overview` | 总览。含 `by_status`、`by_category`、`fetch_7d`、`token_tiers`、`scheduler`（健康度与容量自检）、`suspended_clients`。`scheduler` 里的容量分两组：轮换的 `steady_rate_per_day` / `max_rate_per_day`，与首验的 `unverified` / `first_verify_per_day` / `first_verify_days`——两者性质不同，轮换需求按账号数除以阈值天数摊开，首验是导入那一刻全部堆进队列的 |
-| `GET /api/admin/accounts` | 列表。`q`、`category_id`、`status`、`channel`、`tag`、`domain`、`page`、`size`。`domain` 按邮箱后缀筛选，如 `outlook.com` |
+| `GET /api/admin/overview` | 总览。含 `total`、`total_exact`、`by_status`、`by_status_capped`、`by_category`、`fetch_7d`、`code_7d`、`token_tiers`、`scheduler`（健康度与容量自检）、`suspended_clients`。<br>**计数是封顶的**：`total_exact` 为 `false` 表示 `total` 是数据库的行数估计（账号超过 10 万后如此，误差几个百分点）；`by_status_capped` 为 `true` 表示分状态计数在 10 万处截断，各项都是「至少这么多」。原因是 `COUNT(*)` 的代价与表规模成正比，十亿行要二十多分钟。<br>`scheduler` 里的容量分两组：轮换的 `steady_rate_per_day` / `max_rate_per_day`，与首验的 `unverified` / `first_verify_per_day` / `first_verify_days`——两者性质不同，轮换需求按账号数除以阈值天数摊开，首验是导入那一刻全部堆进队列的。<br>另含速率自适应的结果：`auto_rate` 说明速率是推导的还是手填的，`per_ip_per_min` / `per_client_per_min` 是本次生效值，`need_ips` / `need_clients` 是按安全上限反推的资源需求量，与 `have_ips` / `have_clients` 的差额就是还缺多少。`capped` 为真表示队列计数也撞到了封顶 |
+| `GET /api/admin/accounts` | 列表。`q`、`category_id`、`status`、`channel`、`tag`、`domain`、`page`、`size`。`domain` 按邮箱后缀精确匹配，如 `outlook.com`；`q` 传完整邮箱时走等值查询，传片段时走模糊匹配。<br>**`total` 封顶在 100000**，等于这个值时表示「至少这么多」，页码也随之封顶——分页只需要知道还有没有下一页，而数准总数在大表上是一次全表扫描 |
 | `GET /api/admin/accounts/{id}` | 单账号，详情页深链用 |
 | `PATCH /api/admin/accounts/{id}` | `{category_id?, clear_category?, note?, channel_policy?, disabled?, tags?, refresh_token?, client_id?}`。给了 `refresh_token` 会整组覆盖凭据并把账号重置为未验证，同时清掉通道能力、失败计数与 90 天倒计时——它们都是针对上一把授权码的。只给 `client_id` 不给授权码会被拒绝：授权码是绑定 client_id 签发的 |
 | `GET /api/admin/accounts/domains` | 账号池里出现过的邮箱域名及各自数量，供筛选下拉使用 |
 | `POST /api/admin/accounts/{id}/verify` | 手动轮换，返回 `{account, ok, error?}` |
+| `POST /api/admin/accounts/{id}/probe` | 逐条探测三个通道是否可用，返回 `{account, results, ok_count}`，`results` 每项为 `{channel, ok, error?}`。探测会真实登录一次，结果写回账号的通道能力 |
 | `POST /api/admin/accounts/unlock-secrets` | `{password}` 为当前登录密码。通过后本会话 15 分钟内可查看明文密码，返回 `{unlocked_until}`。密码错误返回 403 `CONFIRM_REQUIRED` |
 | `GET /api/admin/accounts/{id}/password` | 返回 `{password, recovery_email, recovery_password}` 三样明文，缺的那项为空串、字段本身始终存在。未解锁返回 403 `CONFIRM_REQUIRED`，三样都没有返回 404 `NO_SECRET`。**每次调用只写一条 `trigger=reveal` 的审计日志**——界面上它们是同一个弹窗的内容，拆开取会把「看了一次」记成三次 |
 | `POST /api/admin/accounts/batch/verify` | **同步接口**，返回 `{ok, fail, skipped}`。单批上限 20，超过返回 `BATCH_TOO_LARGE`。`BANNED` 的账号会被跳过并计入 `skipped`——对它重试永远不会成功，只会给该 `client_id` 的失败计数添砖加瓦。更大的量交给调度器 |
@@ -227,7 +233,7 @@ curl -X POST -H "Authorization: Bearer okc_xxx" -H 'Content-Type: application/js
 | `POST /api/admin/apikeys/{id}/reset` | 重置。返回新明文，名称、范围、限速、权限位全部保留，并清除吊销状态。旧明文立即失效 |
 | `DELETE /api/admin/apikeys/{id}` | 彻底删除，记录不再保留 |
 | `GET/PUT /api/admin/settings` | 保存后立即生效，响应带最新的 `health` |
-| `GET /api/admin/logs` | `type=fetch\|rotate\|reveal`、`account_id`、`result`、分页 |
+| `GET /api/admin/logs` | `type=fetch\|rotate\|reveal`、`account_id`、`result`、分页。`total` 同样封顶在 100000 |
 | `DELETE /api/admin/logs` | body 二选一：`{ids:[…]}` 删除选中；`{clear:"fetch"\|"rotate"\|"reveal"\|"all"}` 按范围清空。返回 `{deleted}` |
 | `POST /api/admin/jobs/verify` | 起后台批量验证任务。`{ids}` 或 `{filter}` 二选一，`concurrency` 默认 5、硬顶 16，单任务上限 20000 个账号。返回任务快照。已有同类任务在跑时返回 409 `JOB_RUNNING` |
 | `GET /api/admin/jobs` / `jobs/{id}` | 任务列表与单个进度。进度靠轮询后者获取 |
