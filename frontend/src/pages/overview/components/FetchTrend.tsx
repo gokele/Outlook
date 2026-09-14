@@ -1,5 +1,16 @@
-import { Card, Empty, Flex, Segmented, Tooltip, Typography, theme } from 'antd';
+import { Card, Empty, Flex, Segmented, Tooltip as AntTooltip, Typography, theme } from 'antd';
 import { useMemo, useState } from 'react';
+import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import type { DailyPoint, Overview } from '@/api/types';
 
 interface FetchTrendProps {
@@ -41,6 +52,15 @@ function formatDay(unix: number): string {
   return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
 }
 
+/** 图上的一行: 柱子用绝对量, 折线用百分比, 两者共用横轴 */
+interface Row {
+  day: string;
+  ok: number;
+  fail: number;
+  /** 那天一次请求都没有时为 null —— 折线必须在这里断开, 不能当成 0% */
+  rate: number | null;
+}
+
 /**
  * 近 30 天的取件趋势。
  *
@@ -51,9 +71,6 @@ function formatDay(unix: number): string {
  * 柱子是量、折线是成功率, 两者必须一起看: 某天只有 3 次请求挂了 2 次,
  * 成功率 33% 看着吓人, 其实什么都没发生。只画成功率会天天虚惊,
  * 只画量又看不出好坏。
- *
- * 手写 SVG 而不是引图表库: 这里只要三十根柱子和一条折线,
- * 为它背上几百 KB 的依赖与一套要跟着升级的 API 不划算。
  */
 export function FetchTrend({ data }: FetchTrendProps) {
   const { token } = theme.useToken();
@@ -65,11 +82,26 @@ export function FetchTrend({ data }: FetchTrendProps) {
     [data.fetch_daily, data.code_daily, series],
   );
 
+  const rows: Row[] = useMemo(
+    () =>
+      points.map((p) => {
+        const n = p.ok + p.fail;
+        return {
+          day: formatDay(p.day),
+          ok: p.ok,
+          fail: p.fail,
+          // null 而不是 0: 配上 connectNulls={false}, recharts 会在这里断开折线。
+          // 当成 0% 会凭空造出一段暴跌, 而那天其实什么都没发生。
+          rate: n > 0 ? Math.round((p.ok / n) * 1000) / 10 : null,
+        };
+      }),
+    [points],
+  );
+
   const stats = useMemo(() => {
     const total = points.reduce((sum, p) => sum + p.ok + p.fail, 0);
     const ok = points.reduce((sum, p) => sum + p.ok, 0);
-    const peak = points.reduce((max, p) => Math.max(max, p.ok + p.fail), 0);
-    return { total, ok, peak, rate: total > 0 ? (ok / total) * 100 : 0 };
+    return { total, ok, rate: total > 0 ? (ok / total) * 100 : 0 };
   }, [points]);
 
   const colors = {
@@ -77,8 +109,9 @@ export function FetchTrend({ data }: FetchTrendProps) {
     warn: token.colorWarning,
     bad: token.colorError,
   } as const;
+  const overallColor = colors[rateColor(stats.rate)];
 
-  if (points.length === 0 || stats.total === 0) {
+  if (rows.length === 0 || stats.total === 0) {
     return (
       <Card size="small" title="取件趋势" style={{ height: '100%' }}>
         <Empty
@@ -89,42 +122,6 @@ export function FetchTrend({ data }: FetchTrendProps) {
       </Card>
     );
   }
-
-  // 画布用固定坐标系, 靠 viewBox 缩放, 因此这些数字与屏幕宽度无关。
-  const W = 720;
-  const H = 160;
-  const padTop = 12;
-  const padBottom = 22;
-  const plotH = H - padTop - padBottom;
-  const slot = W / points.length;
-  const barW = Math.max(3, Math.min(14, slot * 0.62));
-
-  // 柱高按当天总量占峰值的比例。峰值为 0 时不会走到这里(上面已挡掉)。
-  const barH = (p: DailyPoint) => ((p.ok + p.fail) / stats.peak) * plotH;
-
-  // 折线只在那天真的有请求时才有值; 没有请求的那天不画点, 也不连线 ——
-  // 把空白天当成 0% 会凭空造出一段暴跌。
-  const linePoints = points.map((p, i) => {
-    const n = p.ok + p.fail;
-    if (n === 0) return null;
-    const rate = p.ok / n;
-    return { x: i * slot + slot / 2, y: padTop + (1 - rate) * plotH, rate, index: i };
-  });
-
-  /** 把连续有值的段落切开, 断开处不连线 */
-  const segments: Array<Array<{ x: number; y: number }>> = [];
-  let run: Array<{ x: number; y: number }> = [];
-  for (const lp of linePoints) {
-    if (lp) {
-      run.push({ x: lp.x, y: lp.y });
-    } else if (run.length) {
-      segments.push(run);
-      run = [];
-    }
-  }
-  if (run.length) segments.push(run);
-
-  const overallColor = colors[rateColor(stats.rate)];
 
   return (
     <Card
@@ -144,11 +141,11 @@ export function FetchTrend({ data }: FetchTrendProps) {
       }
     >
       <Flex justify="space-between" align="baseline" wrap gap={8} style={{ marginBottom: 8 }}>
-        <Tooltip title={meta.hint}>
+        <AntTooltip title={meta.hint}>
           <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
             近 30 天{meta.rateWord}
           </Typography.Text>
-        </Tooltip>
+        </AntTooltip>
         <Typography.Text strong style={{ color: overallColor, fontSize: 18 }}>
           {stats.rate.toFixed(1)}%
           <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
@@ -158,123 +155,90 @@ export function FetchTrend({ data }: FetchTrendProps) {
         </Typography.Text>
       </Flex>
 
-      {/*
-        宽表格那套办法: 自己滚, 不把页面顶宽。窄屏上三十根柱子挤成一团
-        没有意义, 让它横向滚出去反而看得清。
-      */}
-      <div style={{ overflowX: 'auto' }}>
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          /*
-            高度交给宽高比自己算, 不写死。
-            写死高度会让 viewBox 等比缩放后居中, 两侧留出大片空白 ——
-            图只占了中间一小条, 而柱子挤在一起正好看不出走向。
-          */
-          /*
-            minWidth 不是 320 而是 560: 高度按 720:160 的比例跟着宽度走,
-            320 宽算下来只有 72px 高 —— 三十根柱子压成一条带子, 读不出走向。
-            560 起步换来 124px 的高度, 窄屏上横向滚一下, 比压扁了看得清。
-          */
-          style={{ display: 'block', width: '100%', minWidth: 560, height: 'auto' }}
-          role="img"
-          aria-label={`近 30 天${meta.label}趋势，${meta.rateWord} ${stats.rate.toFixed(1)}%`}
-        >
-          {/* 参考线: 90% 与 70% 正是配色换档的两个位置 */}
-          {[0.9, 0.7].map((r) => (
-            <g key={r}>
-              <line
-                x1={0}
-                x2={W}
-                y1={padTop + (1 - r) * plotH}
-                y2={padTop + (1 - r) * plotH}
-                stroke={token.colorSplit}
-                strokeDasharray="3 4"
-              />
-              {/* 标在左边: 右边是折线的终点, 那里还要放一个强调用的圆点 */}
-              <text
-                x={2}
-                y={padTop + (1 - r) * plotH - 3}
-                fontSize={9}
-                fill={token.colorTextQuaternary}
-              >
-                {r * 100}%
-              </text>
-            </g>
-          ))}
-
-          {points.map((p, i) => {
-            const n = p.ok + p.fail;
-            const h = barH(p);
-            const x = i * slot + (slot - barW) / 2;
-            const failH = n > 0 ? (p.fail / n) * h : 0;
-            return (
-              <g key={p.day}>
-                {/* 失败在下、成功在上: 失败那截贴着基线, 一眼看得出有没有 */}
-                <rect
-                  x={x}
-                  y={padTop + plotH - failH}
-                  width={barW}
-                  height={failH}
-                  fill={token.colorError}
-                  opacity={0.75}
-                />
-                <rect
-                  x={x}
-                  y={padTop + plotH - h}
-                  width={barW}
-                  height={h - failH}
-                  fill={token.colorFillSecondary}
-                />
-                <title>
-                  {formatDay(p.day)} · {meta.okWord} {p.ok} · {meta.failWord} {p.fail}
-                </title>
-              </g>
-            );
-          })}
-
-          {/* 基线 */}
-          <line
-            x1={0}
-            x2={W}
-            y1={padTop + plotH}
-            y2={padTop + plotH}
-            stroke={token.colorBorderSecondary}
+      <ResponsiveContainer width="100%" height={220}>
+        <ComposedChart data={rows} margin={{ top: 8, right: 4, bottom: 0, left: -16 }}>
+          <CartesianGrid stroke={token.colorSplit} vertical={false} />
+          <XAxis
+            dataKey="day"
+            tick={{ fill: token.colorTextQuaternary, fontSize: 11 }}
+            axisLine={{ stroke: token.colorBorderSecondary }}
+            tickLine={false}
+            // 三十个日期标签在这个宽度下必然叠在一起, 让它按间距自己挑着显示。
+            interval="preserveStartEnd"
+            minTickGap={24}
           />
-
-          {/* 成功率折线 */}
-          {segments.map((seg, i) => (
-            <polyline
-              key={i}
-              fill="none"
-              stroke={overallColor}
-              strokeWidth={1.8}
-              strokeLinejoin="round"
-              points={seg.map((s) => `${s.x},${s.y}`).join(' ')}
-            />
-          ))}
-
-          {/* 最后一天单独标出来: 人最关心的是"现在" */}
-          {(() => {
-            const last = [...linePoints].reverse().find(Boolean);
-            if (!last) return null;
-            return <circle cx={last.x} cy={last.y} r={3} fill={overallColor} />;
-          })()}
-
-          {/* 只标首尾两个日期。三十个日期标签在这个宽度下必然叠在一起 */}
-          <text x={0} y={H - 6} fontSize={10} fill={token.colorTextQuaternary}>
-            {formatDay(points[0].day)}
-          </text>
-          <text
-            x={W}
-            y={H - 6}
-            textAnchor="end"
-            fontSize={10}
-            fill={token.colorTextQuaternary}
-          >
-            {formatDay(points[points.length - 1].day)}
-          </text>
-        </svg>
-      </div>
+          {/* 左轴是次数, 右轴是百分比 —— 量纲不同, 必须分开两根轴 */}
+          <YAxis
+            yAxisId="count"
+            tick={{ fill: token.colorTextQuaternary, fontSize: 11 }}
+            axisLine={false}
+            tickLine={false}
+            width={48}
+          />
+          <YAxis
+            yAxisId="rate"
+            orientation="right"
+            domain={[0, 100]}
+            ticks={[0, 70, 90, 100]}
+            tickFormatter={(v: number) => `${v}%`}
+            tick={{ fill: token.colorTextQuaternary, fontSize: 11 }}
+            axisLine={false}
+            tickLine={false}
+            width={40}
+          />
+          {/* 90 与 70 正是配色换档的两个位置 */}
+          <ReferenceLine yAxisId="rate" y={90} stroke={token.colorSplit} strokeDasharray="3 4" />
+          <ReferenceLine yAxisId="rate" y={70} stroke={token.colorSplit} strokeDasharray="3 4" />
+          <Tooltip
+            cursor={{ fill: token.colorFillQuaternary }}
+            contentStyle={{
+              background: token.colorBgElevated,
+              border: `1px solid ${token.colorBorderSecondary}`,
+              borderRadius: token.borderRadius,
+              fontSize: 12,
+            }}
+            labelStyle={{ color: token.colorText }}
+            // value 可能是 null（那天没有请求）也可能是 undefined，
+            // recharts 的类型把两者都算进来，这里一并当成"没有数据"。
+            formatter={(value, name) =>
+              value === null || value === undefined
+                ? ['—', name]
+                : [name === meta.rateWord ? `${value}%` : value, name]
+            }
+          />
+          {/* 失败堆在下面贴着基线, 一眼看得出有没有 */}
+          <Bar
+            yAxisId="count"
+            dataKey="fail"
+            stackId="n"
+            name={meta.failWord}
+            fill={token.colorError}
+            fillOpacity={0.75}
+            maxBarSize={16}
+          />
+          <Bar
+            yAxisId="count"
+            dataKey="ok"
+            stackId="n"
+            name={meta.okWord}
+            fill={token.colorFillSecondary}
+            maxBarSize={16}
+          />
+          <Line
+            yAxisId="rate"
+            type="monotone"
+            dataKey="rate"
+            name={meta.rateWord}
+            stroke={overallColor}
+            strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 4 }}
+            // 没有请求的那天不连线: 连起来会看成"那几天一直在稳定运行",
+            // 而真相可能是服务停了三天。
+            connectNulls={false}
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
     </Card>
   );
 }

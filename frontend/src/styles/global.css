@@ -187,6 +187,31 @@ body {
   overflow-wrap: anywhere;
 }
 
+/*
+ * 只给键盘和读屏用的链接：平时不占位置，一旦聚焦就正常显示出来。
+ *
+ * 图表画成 SVG 之后，条子是画出来的图形，鼠标能点但键盘够不着 ——
+ * 而"点某个分类看它的账号"是一条真实的路，不能因为换了画法就断掉。
+ * 用 clip 而不是 display:none 或 visibility:hidden：后两者会把元素
+ * 从聚焦顺序里一并摘掉，那就连键盘也用不了了，等于没做。
+ *
+ * pointer-events: none 是必须的，而且不只是为了"别挡住底下的东西"：
+ * 裁剪只影响绘制，里面的链接**自身的布局尺寸还在**（量出来 106×22）。
+ * 不关掉指针事件，它们就会被当成一批点不中的触摸目标 —— 而它们本来
+ * 就不是给指针用的，鼠标用户点的是图表上的条子。键盘聚焦不受影响。
+ */
+.okc-sr-only:not(:focus-within) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* 表格行悬浮时轻微提亮, 配合 antd 自带的底色变化让指向更明确 */
 .ant-table-wrapper .ant-table-tbody > tr > td {
   transition: background-color 0.18s ease;

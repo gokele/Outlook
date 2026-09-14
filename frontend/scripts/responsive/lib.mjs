@@ -189,6 +189,16 @@ export const PAGE_PROBE = (isMobile) => {
       if (invisible) continue;
       if (el.className && el.className.toString().includes('-hidden')) continue;
 
+      /*
+       * 指针根本够不着的东西不是触摸目标。
+       *
+       * pointer-events 是继承的，所以取自己的计算值就够，不必往上走。
+       * 典型是"只给键盘和读屏用"的那类链接：它们被裁到 1px 不参与绘制，
+       * 但**子元素自身的布局尺寸还在**（量出来 106×22），
+       * 不排掉就会被当成一批点不中的按钮 —— 而它们本来就不是给指针用的。
+       */
+      if (cs.pointerEvents === 'none') continue;
+
       // 只是包住按钮的链接不算：真正的点击区域是里面那个按钮。
       if (
         el.tagName === 'A' &&

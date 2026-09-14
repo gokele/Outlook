@@ -45,6 +45,12 @@ export default defineConfig({
           if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
             return 'react';
           }
+          // 图表库单独一块: 只有总览页用得到它。
+          // 混进主包会让每一次登录都先下载一遍图表引擎,
+          // 而大多数人打开后台是去账号列表, 根本不看总览。
+          if (id.includes('/recharts/') || id.includes('/victory-vendor/') || id.includes('/d3-')) {
+            return 'charts';
+          }
           // 其余依赖交给 Rollup 自行归组, 避免人为造出循环 chunk
           return undefined;
         },
