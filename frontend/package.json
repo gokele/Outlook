@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "seed:responsive": "node scripts/responsive/seed.mjs",
-    "check:responsive": "node scripts/responsive/check.mjs"
+    "check:responsive": "node scripts/responsive/check.mjs",
+    "check:empty": "node scripts/responsive/empty.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",

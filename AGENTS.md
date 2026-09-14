@@ -72,16 +72,24 @@ CI 会在真实 PostgreSQL 上跑一遍（见 `.github/workflows/test.yml`，
 带 `postgres:17` service，SQLite 与 PostgreSQL 各跑一趟），
 因此推上去就能知道结果；本地改数据库相关代码时仍建议自己先跑一遍。
 
-改前端版式后跑响应式检查。它在 12 个视口 × 10 个页面上做机器判定
+改前端版式后跑响应式检查。它在 12 个视口 × 全部 12 条路由上做机器判定
 （整页横向滚动、元素越界、触摸目标过小、文字裁切），再加连续缩放采样、
 弹窗抽屉专项、200% 缩放、键盘走查与手机端完整流程：
 
 ```bash
 cd frontend
+ADMIN_PASS=xxx npm run check:empty        # 空态检查，必须在灌数据之前
 ADMIN_PASS=xxx npm run seed:responsive    # 灌一批含极端长度的数据
 ADMIN_PASS=xxx npm run check:responsive   # 完整跑约 5 分钟
 QUICK=1 ADMIN_PASS=xxx npm run check:responsive   # 改代码时用这个，约 100 秒
 ```
+
+**`check:empty` 的顺序不能调。** 一旦灌了数据，空态就再也回不来了 ——
+而 `check:responsive` 要求库里有数据（空表照不出任何版式问题），
+于是它永远看不到空态。空态恰恰是新用户看到的第一屏：装完、登录、落在总览，
+那一刻整个产品只有空态。它除了查版式，还查总览与账号列表在空着时
+**有没有一条通往别处的链接** —— 判据不能写成"有没有可点的东西"，
+PageContainer 的「刷新」按钮每一页都有，那样这条检查永远通过。
 
 它用系统已装的 Chrome（`CHROME_PATH` 可指定），不下载 playwright 自带的浏览器。
 CI 里作为独立任务跑在真实产物上（前端嵌进 Go 二进制、单端口托管），

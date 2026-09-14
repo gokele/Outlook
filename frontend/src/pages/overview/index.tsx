@@ -6,6 +6,7 @@ import { formatUnix } from '@/utils/time';
 import { CategoryDistribution } from './components/CategoryDistribution';
 import { FetchStats } from './components/FetchStats';
 import { FetchTrend } from './components/FetchTrend';
+import { GettingStarted } from './components/GettingStarted';
 import { SchedulerHealthCard } from './components/SchedulerHealth';
 import { StatusSummary } from './components/StatusSummary';
 import { SuspendedClients } from './components/SuspendedClients';
@@ -32,7 +33,18 @@ export default function OverviewPage() {
       }
     >
       <QueryStateView isPending={isPending} error={error} onRetry={() => void refetch()} skeletonRows={8}>
-        {data ? (
+        {/*
+          池子空着时整页换成三步引导，而不是渲染一屏零。
+
+          判 total === 0 是可靠的：总数只有超过阈值才走统计信息估算，
+          小池子一律精确计数（见 CountAccountsApprox）—— 不会出现
+          "已经导入了但估算还是 0，引导赖着不走"的情况。
+        */}
+        {data && data.total === 0 ? (
+          <div className="okc-rise">
+            <GettingStarted />
+          </div>
+        ) : data ? (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             {/*
               看板逐块浮现, 每块错开 60ms。

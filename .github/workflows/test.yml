@@ -131,6 +131,20 @@ jobs:
 
       # 空页面照不出版式问题：表格没有行、标签没有长度。
       # 灌的数据里刻意掺了超长邮箱与超长备注 —— 那才是把布局顶坏的内容。
+      # 必须排在灌数据之前：一旦灌了，空态就再也回不来了。
+      # 而空态正是新用户看到的第一屏 —— 装完、登录、落在总览，
+      # 那一刻整个产品只有空态。这一整类页面此前一次都没被检查过。
+      - name: 空态检查（灌数据之前）
+        working-directory: frontend
+        env:
+          BASE_URL: http://127.0.0.1:8081
+          OUT_DIR: /tmp/empty-shots
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          PASS=$(grep -o '"password":"[^"]*"' /tmp/api.log | head -1 | cut -d'"' -f4)
+          echo "::add-mask::$PASS"
+          ADMIN_PASS="$PASS" npm run check:empty
+
       - name: 灌入测试数据
         working-directory: frontend
         env:
@@ -158,5 +172,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: responsive-shots
-          path: /tmp/responsive-shots
+          # 两处都带上：空态那一步失败时，截图同样是唯一能看清现场的东西。
+          path: |
+            /tmp/responsive-shots
+            /tmp/empty-shots
           retention-days: 7
