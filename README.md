@@ -87,7 +87,19 @@ curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
 
 生产不使用容器。**前端嵌在二进制里**，目标机器上只需要一个可执行文件加一个 PostgreSQL。
 
-正常发版走 GitHub Actions（见下），本地手工构建的步骤是：
+最省事的方式是直接下 [Releases](https://github.com/gokele/Outlook/releases) 里的现成二进制，
+名字形如 `outlook-v0.4.3-linux-amd64`（Windows 是 `-windows-amd64.exe`）：
+
+```bash
+V=v0.4.3   # 换成 Releases 页上最新的那个标签
+curl -LO "https://github.com/gokele/Outlook/releases/download/$V/outlook-$V-linux-amd64"
+# 下面的命令与 systemd 配置里都写作 ./api，所以改个名
+mv "outlook-$V-linux-amd64" api && chmod +x api
+```
+
+`checksums.txt` 与二进制一同发布，介意的话先 `sha256sum -c` 对一遍。
+
+要自己构建（或者改过代码）也可以：
 
 ```bash
 # 1. 构建前端，产物拷进 backend/web/dist 供 go:embed 打包
@@ -103,8 +115,17 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 
 把 `api` 拷到服务器、配好环境变量、跑起来即可。不需要 Nginx 托管静态资源；要 HTTPS 时前面挂一层反代即可。
 
-首次启动会自动建一个 `admin` 账号并把随机密码打进日志。用 systemd 起的服务
-在 `journalctl -u <服务名> | grep 已创建默认管理员` 里看。**错过了也不要紧**：
+### 第一次登录
+
+用户名是 `admin`。密码是首次启动时随机生成的，只在日志里出现**那一次**，形如：
+
+```
+{"level":"WARN","msg":"已创建默认管理员，请立即登录并修改密码","username":"admin","password":"..."}
+```
+
+用 systemd 起的服务在 `journalctl -u <服务名> | grep 已创建默认管理员` 里看。
+
+**错过了或者忘了也不要紧**，在服务器上重新生成一个：
 
 ```bash
 ./api -reset-password admin              # 生成一个新的强密码并打印

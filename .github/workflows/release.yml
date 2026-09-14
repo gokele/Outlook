@@ -1,9 +1,16 @@
 # 发布。推一个 v 开头的标签即触发，产物直接进 GitHub Release，
 # 应用里的「在线更新」面板随后就能看到并一键装上。
 #
-# 资产命名必须带 <GOOS>-<GOARCH>：更新器就是靠这段字符串挑出适配当前
-# 机器的那一个（internal/updater 的 Latest）。名字对不上，用户会在
-# arm 机器上装到 amd64 的包，而错误要到下一次启动才暴露，离现场很远。
+# 资产名形如 outlook-v0.4.3-linux-amd64（Windows 带 .exe）。
+#
+# 带上版本号是因为下载目录里一堆同名的 api-linux-amd64 谁也认不出是哪一版，
+# 浏览器还会自作主张补成「(1)」。前缀用 outlook 而不是 api —— 下载下来的
+# 那个文件叫 api 的时候，过两天没人知道它是什么。
+#
+# <GOOS>-<GOARCH> 那一段不能动：更新器就是靠它挑出适配当前机器的那一个
+# （internal/updater 的 Latest，用 strings.Contains 匹配，所以名字前后
+# 加什么都行，缺了这段就不行）。名字对不上，用户会在 arm 机器上装到
+# amd64 的包，而错误要到下一次启动才暴露，离现场很远。
 #
 # checksums.txt 不是可选项：更新决定服务器下一刻运行什么代码，
 # 缺它的发布会被更新器直接拒绝。
@@ -73,7 +80,7 @@ jobs:
           mkdir -p ../release
           build() {
             goos=$1; goarch=$2; ext=$3
-            out="../release/api-${goos}-${goarch}${ext}"
+            out="../release/outlook-${VERSION}-${goos}-${goarch}${ext}"
             echo "==> $out"
             GOOS=$goos GOARCH=$goarch go build \
               -trimpath \
@@ -90,7 +97,7 @@ jobs:
         run: |
           # 必须在产物目录内执行：sha256sum 会把路径原样写进文件，
           # 带上目录前缀就与 Release 里的资产名对不上了。
-          sha256sum api-* > checksums.txt
+          sha256sum outlook-* > checksums.txt
           cat checksums.txt
 
       # 发布说明先用 GitHub 按提交自动生成，保证发布不会是空白；
@@ -102,5 +109,5 @@ jobs:
           name: ${{ steps.ver.outputs.tag }}
           generate_release_notes: true
           files: |
-            release/api-*
+            release/outlook-*
             release/checksums.txt

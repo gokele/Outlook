@@ -143,7 +143,27 @@ export const PAGE_PROBE = (isMobile) => {
     if (r.right > vw + 2 && !clippedOrScrollable(el)) {
       issues.push({
         kind: '元素越出视口',
-        detail: `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ').slice(0, 2).join('.')} 右缘 ${Math.round(r.right)} > ${vw}`,
+        /*
+         * 带上祖先链和一小段文字。
+         *
+         * 只报一句「div.ant-space 右缘 528」在 CI 日志里是查不动的：
+         * 页面上 .ant-space 有几十个，而 CI 跑的库和本机的不一样，
+         * 常常在本机根本复现不出来 —— 除了这行字没有别的线索可查。
+         */
+        detail:
+          `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ').slice(0, 2).join('.')} ` +
+          `右缘 ${Math.round(r.right)} > ${vw}` +
+          ` | 文字 "${(el.textContent || '').trim().slice(0, 30)}"` +
+          ` | 位于 ${(() => {
+            const chain = [];
+            for (let p = el.parentElement, i = 0; p && i < 5; p = p.parentElement, i++) {
+              chain.push(
+                p.tagName.toLowerCase() +
+                  (p.className ? '.' + p.className.toString().split(' ')[0] : ''),
+              );
+            }
+            return chain.join(' < ');
+          })()}`,
       });
       if (issues.filter((i) => i.kind === '元素越出视口').length > 6) break;
     }

@@ -18,7 +18,9 @@ import (
 // newFakeGitHub 起一个假的 GitHub，返回一个 release 与两个资产。
 func newFakeGitHub(t *testing.T, payload []byte, sumOverride string) (*httptest.Server, string) {
 	t.Helper()
-	assetName := fmt.Sprintf("api-%s-%s", runtime.GOOS, runtime.GOARCH)
+	// 与 .github/workflows/release.yml 里实际发出去的名字保持一致。
+	// 写成别的形状测试照样能过（匹配是子串），但那样它就守不住真正在用的命名了。
+	assetName := fmt.Sprintf("outlook-v9.9.9-%s-%s", runtime.GOOS, runtime.GOARCH)
 	sum := sha256.Sum256(payload)
 	hexSum := hex.EncodeToString(sum[:])
 	if sumOverride != "" {
@@ -78,6 +80,57 @@ func TestLatestPicksMatchingAsset(t *testing.T) {
 	if rel == nil || rel.Version != "v9.9.9" || rel.AssetName != assetName {
 		t.Fatalf("解析结果不符: %+v", rel)
 	}
+}
+
+// 资产名可以改，`<GOOS>-<GOARCH>` 那一段不能。
+//
+// 匹配用的是子串，所以前后加版本号、换前缀都不影响；而少了平台那一段，
+// 更新器就挑不出任何资产 —— 后果不是报个错了事，是已经部署在外面的旧版本
+// 全部失去在线更新能力，只能一台台手工换。这条用例守的就是这个边界：
+// 老的 api- 命名必须照样能认（那些发布还挂在 Releases 上），
+// 不带平台的名字必须被拒。
+func TestAssetNamingContract(t *testing.T) {
+	plat := runtime.GOOS + "-" + runtime.GOARCH
+	accepted := []string{
+		"outlook-v9.9.9-" + plat, // 现在发的
+		"api-" + plat,            // v0.4.2 及更早发的
+		"outlook-" + plat,
+	}
+	for _, name := range accepted {
+		srv := fakeGitHubWithAsset(t, name)
+		rel, err := newUpdater(t, srv, "v1.0.0").Latest(context.Background())
+		if err != nil || rel == nil || rel.AssetName != name {
+			t.Errorf("应当认出资产 %q，得到 %+v (err=%v)", name, rel, err)
+		}
+	}
+
+	for _, name := range []string{"outlook-v9.9.9", "outlook-v9.9.9-" + runtime.GOOS, "api"} {
+		srv := fakeGitHubWithAsset(t, name)
+		if _, err := newUpdater(t, srv, "v1.0.0").Latest(context.Background()); err == nil {
+			t.Errorf("资产名 %q 里没有 %q，不该被当成可用产物", name, plat)
+		}
+	}
+}
+
+// fakeGitHubWithAsset 起一个只提供指定资产名的假 GitHub。
+func fakeGitHubWithAsset(t *testing.T, assetName string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	var srv *httptest.Server
+	mux.HandleFunc("/asset", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("bin")) })
+	mux.HandleFunc("/sums", func(w http.ResponseWriter, _ *http.Request) {})
+	mux.HandleFunc("/repos/", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tag_name": "v9.9.9", "body": "说明", "published_at": "2026-09-09T00:00:00Z",
+			"assets": []map[string]any{
+				{"name": assetName, "browser_download_url": srv.URL + "/asset"},
+				{"name": "checksums.txt", "browser_download_url": srv.URL + "/sums"},
+			},
+		})
+	})
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 // TestHasUpdate 校验版本比较, 尤其是开发版一律不更新。

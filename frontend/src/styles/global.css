@@ -126,6 +126,45 @@ body {
   min-height: 32px;
 }
 
+/*
+ * 卡片标题允许换行。
+ *
+ * antd 给 .ant-card-head-title 写死了 nowrap + 省略号。标题里放的是邮箱地址，
+ * 遇到长的（a-very-very-long-local-part@…）内部的 Space 会被撑到一千多像素，
+ * 再被卡片裁掉 —— 用户只看得到前半截，而卡片头一旦不裁（字体度量一变就可能
+ * 不裁），整页就多出一条横向滚动条。让它老老实实换行，两种下场都没有了。
+ */
+/*
+ * 选择器要比 antd 的多一级。antd 的样式是运行时注入的，同等特异性下它在后面，
+ * 一律赢。这里不用 !important —— 多写一层 .ant-card 是能说清楚的，
+ * !important 会让下一个想覆盖它的人无路可走。
+ */
+.ant-card > .ant-card-head .ant-card-head-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+/*
+ * 光让标题换行还不够：标题里是个 Space，它的每一项都是 flex 子项，
+ * 而 flex 子项的 min-width 默认是 auto —— 不肯收缩到内容宽度以下。
+ * 于是一个长邮箱把整个 Space 撑到 528px，320px 的屏幕上多出一条横向滚动条。
+ */
+.ant-card > .ant-card-head .ant-card-head-title .ant-space-item {
+  min-width: 0;
+}
+
+/*
+ * 消息提示条不许比屏幕宽。
+ *
+ * antd 不给 .ant-message-notice-content 设上限，内容多长它多长：
+ * 「数据加载失败: INTERNAL: 没有可用出口……」这种后端原文在 320px 的屏幕上
+ * 量到 470px，两头都看不全，而它偏偏是用户唯一能看到错误原因的地方。
+ */
+.ant-message .ant-message-notice-content {
+  max-width: calc(100vw - 32px);
+  overflow-wrap: anywhere;
+}
+
 /* 表格行悬浮时轻微提亮, 配合 antd 自带的底色变化让指向更明确 */
 .ant-table-wrapper .ant-table-tbody > tr > td {
   transition: background-color 0.18s ease;
@@ -614,6 +653,22 @@ body {
   .ant-modal-close {
     min-width: 32px;
     min-height: 32px;
+  }
+
+  /*
+   * 文字末尾那个复制图标只有 14×22，手指点不中 —— 而它常常是把
+   * client_id、授权码这类长串弄出来的唯一办法，点不中就只能手抄。
+   * 图标本身不变大，撑开的只是可点区域；限在窄屏，宽屏上用鼠标点 14px
+   * 没有问题，反倒是把行高顶开更难看。
+   */
+  .ant-typography-copy,
+  .ant-typography-edit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    min-height: 32px;
+    vertical-align: middle;
   }
 }
 

@@ -1,6 +1,6 @@
 import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { Alert, Button, Card, Collapse, Form, Input, Typography, theme } from 'antd';
+import { Alert, Button, Card, Form, Input, Typography, theme } from 'antd';
 import { ApiError } from '@/api/request';
 import { useLogin } from '@/hooks/useAuth';
 
@@ -50,42 +50,6 @@ export default function LoginPage() {
         <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
           请使用后台管理员账号登录。
         </Typography.Paragraph>
-
-        {/*
-          第一次打开这个页面的人手里什么都没有：不知道用户名是什么，
-          也不知道密码在哪。那串初始密码只在首次启动的日志里出现过一次，
-          用 systemd 起的服务尤其容易错过 —— 不在这里说，就没有地方说了。
-          默认折叠，不打扰已经知道怎么登的人。
-        */}
-        <Collapse
-          ghost
-          size="small"
-          style={{ marginBottom: 16 }}
-          items={[
-            {
-              key: 'first-time',
-              label: <Typography.Text type="secondary">第一次使用？</Typography.Text>,
-              children: (
-                <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-                  默认用户名是 <Typography.Text code>admin</Typography.Text>，初始密码在服务
-                  <b>首次启动</b>的日志里，形如
-                  <Typography.Text code>&quot;已创建默认管理员&quot;</Typography.Text>
-                  那一行。用 systemd 启动的话：
-                  <br />
-                  <Typography.Text code copyable style={{ fontSize: 12 }}>
-                    journalctl -u 服务名 | grep 已创建默认管理员
-                  </Typography.Text>
-                  <br />
-                  没找到或已经忘了也不要紧，在服务器上重新生成一个：
-                  <br />
-                  <Typography.Text code copyable style={{ fontSize: 12 }}>
-                    ./api -reset-password admin
-                  </Typography.Text>
-                </Typography.Paragraph>
-              ),
-            },
-          ]}
-        />
 
         {errorMessage ? (
           <Alert type="error" showIcon message={errorMessage} style={{ marginBottom: 16 }} />
