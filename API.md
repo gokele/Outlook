@@ -216,18 +216,24 @@ HTML 会先去掉标签再匹配，`script` 与 `style` 整块丢弃，避免撞
 
 ### 其余端点
 
+方法一律按上面那节：**写 `POST`，参数放 JSON 请求体**。读取类的括号里标了「亦可 `GET`」，
+那是为已经在用的调用方保留的旧路，新写的代码不必用。
+
 | 端点 | 说明 |
 |---|---|
-| `GET /api/v1/mail/list` | 取最近若干封，参数同上但忽略 `wait` |
-| `GET /api/v1/mail/claim` | 按分类领取一个空闲账号并加租约。参数 `category_id`、`lease`、`project_key`。**缺省只返回租约获取之后到达的邮件**，避免把上一轮的旧验证码当成新的。带 `project_key` 时启用项目隔离：已在该项目上成功用过的账号不会被再次领取，换个项目照样能用。取件失败时租约会被自动退回，不占用账号 |
+| `POST /api/v1/mail/list`（亦可 `GET`） | 取最近若干封，参数同上但忽略 `wait` |
+| `POST /api/v1/mail/claim`（亦可 `GET`） | 按分类领取一个空闲账号并加租约。参数 `category_id`、`lease`、`project_key`。**缺省只返回租约获取之后到达的邮件**，避免把上一轮的旧验证码当成新的。带 `project_key` 时启用项目隔离：已在该项目上成功用过的账号不会被再次领取，换个项目照样能用。取件失败时租约会被自动退回，不占用账号 |
 | `POST /api/v1/mail/complete/{account_id}` | 上报一次使用的结局并释放账号。body `{result, project_key?, cooldown_seconds?}`，`result` 取 `success` 或 `fail`。**只有 success 才在项目维度记账**——失败的原因五花八门，下次重试完全合理。fail 会给账号加冷却（默认 10 分钟），避免它立刻被下一个调用方拿到又失败一次。只有租约持有者能调用 |
-| `GET /api/v1/mail/raw` | 参数 `email`、`message_id`、`channel`，返回原始 MIME 供 .eml 下载 |
-| `GET /api/v1/mail/export` | 在线取件后流式输出。`format=csv\|json`，`limit` 默认 50 上限 200 |
-| `DELETE /api/v1/mail/lease/{account_id}` | 提前释放本 Key 持有的租约 |
-| `GET /api/v1/accounts` | 账号列表，受 Key 的分类范围约束 |
-| `GET /api/v1/accounts/export` | `format=txt\|csv\|json`。含令牌需 `include_secrets=true` 且 Key 开启 `allow_export_secrets`，同时必须限定范围：`ids=1,2,3` 或任一筛选条件。文件名形如 `outlook-accounts-SECRETS-sel-3-20260909-123045.txt`，依次是含令牌标记、范围、条数与时间 |
+| `POST /api/v1/mail/raw`（亦可 `GET`） | 参数 `email`、`message_id`、`channel`，返回原始 MIME 供 .eml 下载 |
+| `POST /api/v1/mail/export`（亦可 `GET`） | 在线取件后流式输出。`format=csv\|json`，`limit` 默认 50 上限 200 |
+| `POST /api/v1/mail/lease/{account_id}/release`（亦可 `DELETE /api/v1/mail/lease/{account_id}`） | 提前释放本 Key 持有的租约 |
+| `POST /api/v1/accounts/list`（亦可 `GET /api/v1/accounts`） | 账号列表，受 Key 的分类范围约束 |
+| `POST /api/v1/accounts/export`（亦可 `GET`） | `format=txt\|csv\|json`。含令牌需 `include_secrets=true` 且 Key 开启 `allow_export_secrets`，同时必须限定范围：`ids=1,2,3` 或任一筛选条件。文件名形如 `outlook-accounts-SECRETS-sel-3-20260909-123045.txt`，依次是含令牌标记、范围、条数与时间 |
 | `POST /api/v1/accounts/import` | 批量导入，body 见下 |
 | `POST /api/v1/accounts/{id}/verify` | 强制轮换一次，确认授权码有效并重置 90 天 |
+| `POST /api/v1/accounts/{id}/update`（亦可 `PATCH /api/v1/accounts/{id}`） | 改分类、标签、备注等 |
+| `POST /api/v1/accounts/{id}/delete`（亦可 `DELETE /api/v1/accounts/{id}`） | 删除账号 |
+| `POST /api/v1/accounts/batch/verify` | 批量强制轮换 |
 
 ### 项目隔离
 
