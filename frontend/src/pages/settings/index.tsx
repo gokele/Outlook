@@ -10,7 +10,7 @@ import { useSaveSettings, useSettings } from './hooks/useSettings';
  * 表单结构完全由后端返回的 settings 决定, 保存时整体 PUT 回去 (含未在前端登记的键)。
  */
 export default function SettingsPage() {
-  const { settings, isPending, isFetching, error, refetch } = useSettings();
+  const { settings, defaults, isPending, isFetching, error, refetch } = useSettings();
   const save = useSaveSettings();
 
   return (
@@ -38,6 +38,7 @@ export default function SettingsPage() {
         >
           <SettingsForm
             settings={settings}
+            defaults={defaults}
             saving={save.isPending}
             onSave={(next) => save.mutate(next)}
           />

@@ -14,7 +14,11 @@ export function useSettings() {
     queryFn: fetchSettings,
     staleTime: STALE_TIME.reference,
   });
-  return { ...query, settings: query.data?.settings ?? EMPTY };
+  return {
+    ...query,
+    settings: query.data?.settings ?? EMPTY,
+    defaults: query.data?.defaults ?? EMPTY,
+  };
 }
 
 /**

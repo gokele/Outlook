@@ -548,6 +548,39 @@ func (s *Server) handleDeleteLogs(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 设置 ----------
 
+// defaultLeaseSeconds 是调用方没指定时长时的租约时长。
+const defaultLeaseSeconds = 300
+
+// settingsDefaults 返回出厂默认值，供界面上的「恢复默认值」使用。
+//
+// 与 handleGetSettings 里那个 defaults 不是一回事：那个是**当前生效值**
+// （启动时已经被保存的设置覆盖过），拿它去"恢复默认"等于什么都没做。
+// 这里从各自的 DefaultConfig() 重新取，那才是没人动过的样子。
+//
+// rotate_after_days 与 tenant 例外，取的是环境变量里的值：它们是这套部署的
+// 基线而不是产品默认值 —— 把企业租户的 tenant 恢复成 consumers，
+// 会让整批账号一个都取不了件。
+func (s *Server) settingsDefaults() map[string]any {
+	oc := orchestrator.DefaultConfig()
+	sc := scheduler.DefaultConfig()
+	return map[string]any{
+		"rotate_after_days":     int(s.cfg.RotateAfter / (24 * time.Hour)),
+		"min_interval_seconds":  int(oc.MinInterval / time.Second),
+		"channel_timeout_secs":  int(oc.ChannelTimeout / time.Second),
+		"fetch_limit":           oc.DefaultLimit,
+		"scheduler_enabled":     sc.Enabled,
+		"auto_rate":             sc.AutoRate,
+		"per_ip_per_min":        sc.PerIPPerMin,
+		"per_client_per_min":    sc.PerClientPerMin,
+		"concurrency":           sc.Concurrency,
+		"p3_per_min":            sc.P3PerMin,
+		"egress_ips":            sc.EgressIPs,
+		"per_proxy_concurrency": sc.PerProxyConcurrency,
+		"lease_default_seconds": defaultLeaseSeconds,
+		"tenant":                s.cfg.Tenant,
+	}
+}
+
 // handleGetSettings 读出全部运行参数，缺省项用当前生效值补齐。
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	saved, err := s.st.GetSettings(r.Context())
@@ -570,14 +603,21 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"p3_per_min":            sc.P3PerMin,
 		"egress_ips":            sc.EgressIPs,
 		"per_proxy_concurrency": sc.PerProxyConcurrency,
-		"lease_default_seconds": 300,
+		"lease_default_seconds": defaultLeaseSeconds,
 		"tenant":                s.cfg.Tenant,
 	}
 	for k, v := range saved {
 		defaults[k] = v
 	}
 	health, _ := s.sched.CheckHealth(r.Context())
-	writeJSON(w, r, map[string]any{"settings": defaults, "health": health})
+	// defaults 一并下发，界面才能算出「恢复默认值」到底会改哪几项。
+	// 让前端自己抄一份默认值是行不通的：它们会随后端改动而漂移，
+	// 而漂移之后「恢复默认」恢复出来的是一组根本没存在过的配置。
+	writeJSON(w, r, map[string]any{
+		"settings": defaults,
+		"health":   health,
+		"defaults": s.settingsDefaults(),
+	})
 }
 
 type settingsReq struct {

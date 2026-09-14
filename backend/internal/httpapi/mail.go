@@ -240,7 +240,7 @@ func (s *Server) handleMailClaim(w http.ResponseWriter, r *http.Request) {
 			catID = &id
 		}
 	}
-	ttl := 300 * time.Second
+	ttl := defaultLeaseSeconds * time.Second
 	if v := q.Get("lease"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			if n > 1800 {

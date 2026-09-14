@@ -15,6 +15,8 @@ import {
 } from 'antd';
 import { useEffect, useMemo } from 'react';
 import type { SettingsMap } from '@/api/types';
+import { useModal } from '@/components/modal';
+import { toast } from '@/lib/feedback';
 import {
   SETTING_FIELD_META,
   SETTING_GROUPS,
@@ -25,6 +27,8 @@ import {
 
 interface SettingsFormProps {
   settings: SettingsMap;
+  /** 出厂默认值, 供「恢复默认值」使用; 后端没下发时该按钮不出现 */
+  defaults?: SettingsMap;
   saving: boolean;
   onSave: (next: SettingsMap) => void;
 }
@@ -55,8 +59,9 @@ function fromFormValue(original: unknown, value: unknown): unknown {
  * 字段完全由后端返回的 settings 决定: 已登记的键使用中文标签、单位与取值约束,
  * 未登记的键按值类型推断控件并归入"其它参数", 保证后端新增配置时前端不需要同步改动。
  */
-export function SettingsForm({ settings, saving, onSave }: SettingsFormProps) {
+export function SettingsForm({ settings, defaults, saving, onSave }: SettingsFormProps) {
   const [form] = Form.useForm();
+  const modal = useModal();
   // 订阅全部字段: 有些项由另一个开关接管, 开关一动它们要立刻置灰。
   // 设置项只有十几个, 整表重渲染的代价可以忽略。
   const values = Form.useWatch([], form);
@@ -87,6 +92,54 @@ export function SettingsForm({ settings, saving, onSave }: SettingsFormProps) {
     const next: SettingsMap = { ...settings };
     for (const key of keys) next[key] = fromFormValue(settings[key], values[key]);
     onSave(next);
+  };
+
+  /**
+   * 与默认值有出入的项。
+   *
+   * 只比"当前表单里的值"与默认值 —— 不是比已保存值：用户可能已经改了几项
+   * 还没保存，那些改动同样会被恢复覆盖掉，确认框里必须一并列出来。
+   */
+  const diffs = useMemo(() => {
+    if (!defaults) return [];
+    const cur = (values ?? {}) as Record<string, unknown>;
+    return keys
+      .filter((key) => key in defaults)
+      .map((key) => ({
+        key,
+        label: SETTING_FIELD_META[key]?.label ?? key,
+        from: key in cur ? cur[key] : settings[key],
+        to: defaults[key],
+      }))
+      .filter((d) => String(toFormValue(d.from)) !== String(toFormValue(d.to)));
+  }, [defaults, keys, values, settings]);
+
+  /**
+   * 恢复默认值。
+   *
+   * 只填进表单，不直接保存 —— 十几个运行参数一次性写回去是个不小的动作，
+   * 让人先看见新值再按「保存设置」，中途反悔还能按「放弃修改」退回去。
+   */
+  const handleRestore = async () => {
+    if (!defaults) return;
+    if (diffs.length === 0) {
+      toast.info('当前配置已经是默认值');
+      return;
+    }
+    const ok = await modal.confirm({
+      title: '恢复默认值',
+      intent: 'warning',
+      confirmText: '填入默认值',
+      description: `以下 ${diffs.length} 项会被改动。填入后还需要点「保存设置」才真正生效。`,
+      consequences: diffs.map(
+        (d) => `${d.label}：${String(toFormValue(d.from))} → ${String(toFormValue(d.to))}`,
+      ),
+    });
+    if (!ok) return;
+    const next: Record<string, unknown> = {};
+    for (const d of diffs) next[d.key] = toFormValue(d.to);
+    form.setFieldsValue(next);
+    toast.success('已填入默认值，点「保存设置」生效');
   };
 
   if (keys.length === 0) {
@@ -205,6 +258,11 @@ export function SettingsForm({ settings, saving, onSave }: SettingsFormProps) {
           <Button onClick={() => form.resetFields()} disabled={saving}>
             放弃修改
           </Button>
+          {defaults && Object.keys(defaults).length > 0 ? (
+            <Button onClick={() => void handleRestore()} disabled={saving}>
+              恢复默认值
+            </Button>
+          ) : null}
         </Space>
       </Space>
     </Form>
