@@ -345,6 +345,36 @@ export const OVERLAY_PROBE = () => {
     if (cr.height < 30 || cr.width < 30) {
       issues.push({ kind: '关闭按钮过小', detail: `${Math.round(cr.width)}x${Math.round(cr.height)}` });
     }
+
+    /*
+     * 标题不许钻到关闭按钮底下。
+     *
+     * 关闭按钮是绝对定位的，标题根本不知道它在那儿 —— 标题一长
+     * （这里是一整个邮箱地址）就压在 ✕ 上，字被盖掉一截，按钮也更难点。
+     *
+     * 量的是文字自己的墨迹范围，不是 .ant-modal-title 那个框：
+     * 它是块级元素，占满整行，直接拿它的右缘去比，短标题也会被判越界。
+     */
+    const title = panel.querySelector('.ant-modal-title, .ant-drawer-title');
+    if (title) {
+      const rg = document.createRange();
+      rg.selectNodeContents(title);
+      const tr = rg.getBoundingClientRect();
+      // 要的是两个框真的叠在一起。只比右缘不行：抽屉的关闭按钮在标题左边，
+      // 本来就该一左一右排开，那样比会把每一个抽屉都判成有问题。
+      const overlaps =
+        tr.width > 0 &&
+        tr.left < cr.right - 1 &&
+        tr.right > cr.left + 1 &&
+        tr.top < cr.bottom - 1 &&
+        tr.bottom > cr.top + 1;
+      if (overlaps) {
+        issues.push({
+          kind: '标题压在关闭按钮上',
+          detail: `文字右缘 ${Math.round(tr.right)} > 关闭按钮左缘 ${Math.round(cr.left)}`,
+        });
+      }
+    }
   }
 
   // 内容比屏幕高时必须有能滚的容器，否则下半截永远看不到

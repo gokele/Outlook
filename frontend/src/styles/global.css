@@ -532,6 +532,43 @@ body {
  *
  * 不限小屏：笔记本把窗口拉矮同样会撞上，只是要更长的表单才触发。
  */
+/*
+ * 上限要成立，弹窗就不能再离顶 100px。
+ *
+ * antd 默认给 .ant-modal 一个 top: 100px，而高度上限只能按 100vh 写 ——
+ * 这两个数互不知道对方存在：100vh-32 的上限加上 100px 的偏移，
+ * 底部按钮照样落到屏幕外。1440×900 上「编辑账号」的页脚顶边在 916，
+ * 屏幕只有 900，取消和保存都点不到。手机端之所以没事，纯粹是因为那边
+ * 把 top 和上限一起改成了 8 和 16，凑巧对得上。
+ *
+ * 改成竖直居中，可用高度和上限就是同一个数，不会再各算各的。
+ * 用 margin: auto 而不是 align-items: center —— 后者在内容比容器高时
+ * 会把顶部切掉且滚不回去，那正是这条规则要防的事。
+ */
+.ant-modal-wrap {
+  display: flex;
+  padding: 16px;
+}
+.ant-modal-wrap > .ant-modal,
+.ant-modal-wrap.ant-modal-centered > .ant-modal {
+  top: 0;
+  margin: auto;
+  padding-bottom: 0;
+  max-width: calc(100vw - 32px);
+}
+
+/*
+ * 标题给关闭按钮让出位置。
+ *
+ * 关闭按钮是绝对定位的，标题不知道它在那儿：标题里带着一整个邮箱地址时
+ * （「编辑 withrecovery@hotmail.com」），窄屏上最后几个字就压在 ✕ 底下。
+ * 留出让位而不是加省略号 —— 被砍掉的恰好是邮箱地址里最要紧的那一段。
+ */
+.ant-modal-header .ant-modal-title {
+  padding-inline-end: 32px;
+  overflow-wrap: anywhere;
+}
+
 .ant-modal-content {
   display: flex;
   flex-direction: column;
@@ -550,11 +587,12 @@ body {
 
 @media (max-width: 767px) {
   /* 小屏上弹窗几乎占满，边距只留一点，内容区才够用 */
-  .ant-modal {
-    top: 8px;
+  .ant-modal-wrap {
+    padding: 8px;
+  }
+  .ant-modal-wrap > .ant-modal,
+  .ant-modal-wrap.ant-modal-centered > .ant-modal {
     max-width: calc(100vw - 16px);
-    margin-inline: auto;
-    padding-bottom: 8px;
   }
   .ant-modal-content {
     max-height: calc(100vh - 16px);

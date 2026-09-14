@@ -3,7 +3,7 @@
 //   npm run check:responsive
 //
 // 跑三组：
-//   1. 页面级   12 个视口 × 10 个页面，外加 19 个连续缩放采样宽度
+//   1. 页面级   12 个视口 × 全部 12 条路由（含登录页与账号详情），外加 19 个连续缩放采样宽度
 //   2. 弹窗抽屉 4 个尺寸 × 若干场景（要点开才存在，页面级走不到）
 //   3. 可达性   200% 缩放、键盘走查、手机端完整业务流程
 //
@@ -25,13 +25,22 @@ import {
   openLoggedIn,
 } from './lib.mjs';
 
-/** 要点开检查的弹窗：先去哪一页，点什么打开 */
+/**
+ * 要点开检查的弹窗：先去哪一页，点什么打开。
+ *
+ * 破坏性操作的二次确认也在里面 —— 它是全站最常出现的那个弹窗，之前一个都没查过。
+ * 只点到"确认框弹出来"为止，随后一律按 Esc 关掉，不会真的删任何东西。
+ */
 const OVERLAY_CASES = [
   { name: '调用示例', path: '/apikeys', open: 'button:has-text("调用示例")' },
   { name: '新建密钥', path: '/apikeys', open: 'button:has-text("新建密钥")' },
   { name: '新建分类', path: '/categories', open: 'button:has-text("新建分类")' },
   { name: '新建出口', path: '/proxies', open: 'button:has-text("添加出口")' },
+  { name: '新建代理组', path: '/proxies', open: 'button:has-text("新建组")' },
   { name: '导出账号', path: '/accounts', open: 'button:has-text("导出")' },
+  { name: '编辑账号', path: '/accounts', open: 'button[aria-label="编辑"]' },
+  { name: '删除确认', path: '/accounts', open: 'button[aria-label="删除"]' },
+  { name: '清空日志确认', path: '/logs', open: 'button:has-text("清空")' },
 ];
 
 /**
@@ -64,18 +73,37 @@ const record = (name, pass, note = '') => {
 mkdirSync(OUT_DIR, { recursive: true });
 const { browser, page } = await openLoggedIn();
 
+/*
+ * 账号详情是唯一带参数的路由，路径里的 id 得先问库里要。
+ *
+ * 写死 /accounts/1 只在全新的库上成立：换个库就是一页"账号不存在"，
+ * 而那一页上没有表格没有长文本，什么版式问题都照不出来 ——
+ * 检查会一路全绿地跳过整个详情页，比不查更糟。
+ */
+await page.goto(BASE_URL + '/accounts', { waitUntil: 'networkidle' });
+await page.waitForTimeout(600);
+const detailHref = await page.evaluate(() => {
+  const a = document.querySelector('a[href^="/accounts/"]');
+  return a ? a.getAttribute('href') : null;
+});
+if (!detailHref) {
+  console.log('\n⚠ 库里一个账号都没有，账号详情页无法检查。先用 seed.mjs 灌数据。');
+  process.exit(1);
+}
+const sweepPages = [...PAGES, { path: detailHref, name: '账号详情' }];
+
 // ---------------- 1. 页面级 ----------------
 // 逐项打进度。这套检查要跑好几分钟，没有输出的终端看起来就像卡死了。
 const t0 = Date.now();
 const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(0)}s`;
 
 console.log(
-  `\n[1/3] 页面级：${activeViewports.length} 个视口 × ${PAGES.length} 个页面${QUICK ? '（快速模式）' : ''}`,
+  `\n[1/3] 页面级：${activeViewports.length} 个视口 × ${sweepPages.length} 个页面${QUICK ? '（快速模式）' : ''}`,
 );
 for (const vp of activeViewports) {
   process.stdout.write(`  ${vp.name} `);
   await page.setViewportSize({ width: vp.w, height: vp.h });
-  for (const p of PAGES) {
+  for (const p of sweepPages) {
     await page.goto(BASE_URL + p.path, { waitUntil: 'networkidle' });
     await page.waitForTimeout(450); // 等动画与数据落定
     const issues = await page.evaluate(PAGE_PROBE, vp.mobile);
@@ -85,6 +113,27 @@ for (const vp of activeViewports) {
   }
   console.log(` ${elapsed()}`);
 }
+
+/*
+ * 登录页得用一个没有会话的上下文单独过一遍。
+ *
+ * 上面那一圈是登录之后跑的，走到 /login 会被直接送回首页 —— 于是全站
+ * 唯一一个"新用户看到的第一屏"，整套检查一次都没照过。
+ */
+process.stdout.write('  登录页（未登录）');
+const anonCtx = await browser.newContext();
+const anonPage = await anonCtx.newPage();
+for (const vp of activeViewports) {
+  await anonPage.setViewportSize({ width: vp.w, height: vp.h });
+  await anonPage.goto(BASE_URL + '/login', { waitUntil: 'networkidle' });
+  await anonPage.waitForTimeout(400);
+  const issues = await anonPage.evaluate(PAGE_PROBE, vp.mobile);
+  await anonPage.screenshot({ path: join(OUT_DIR, `${vp.name}__登录.png`) });
+  process.stdout.write(issues.length ? '✗' : '·');
+  if (issues.length) findings.push({ where: `${vp.name} / 登录`, issues });
+}
+await anonCtx.close();
+console.log(` ${elapsed()}`);
 
 // 连续缩放：只跑最密的两页，看断点前后有没有突变。
 process.stdout.write(`  连续缩放采样 ${activeSweep.length} 个宽度 `);
