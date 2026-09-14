@@ -154,6 +154,28 @@ body {
 }
 
 /*
+ * 错误提示里的长串必须能断开。
+ *
+ * 后端的错误原文常常带着 URL：
+ *   UPSTREAM_ERROR: 没有可用通道: network_error: Post
+ *   "https://login.microsoftonline.com/consumers/oauth2/v2.0/token": …
+ * 那是一整个没有空格的词，默认不换行 —— 在 320px 的屏上它把整页顶出一条
+ * 横向滚动条，而这条提示恰恰是用户唯一能看到失败原因的地方。
+ *
+ * 光加 overflow-wrap 还不够：文字外面套着 Space，它的每一项都是 flex 子项，
+ * min-width 默认 auto，不肯收缩到内容宽度以下，长词照样把容器撑破。
+ */
+.ant-alert-message,
+.ant-alert-description {
+  overflow-wrap: anywhere;
+}
+.ant-alert-description .ant-space,
+.ant-alert-description .ant-space-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/*
  * 消息提示条不许比屏幕宽。
  *
  * antd 不给 .ant-message-notice-content 设上限，内容多长它多长：
