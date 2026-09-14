@@ -223,6 +223,16 @@ CREATE TABLE IF NOT EXISTS log_daily_stats (
 	{name: "042_backfill_log_daily_stats", fn: backfillLogDailyStats},
 	{name: "043_partition_fetch_logs", fn: partitionFetchLogs},
 	{name: "044_log_indexes", fn: ensureLogIndexes},
+
+	// 租约归属到调用方，而不只是到密钥。
+	//
+	// 原来收尾时只校验 api_key_id，跨密钥防住了，同密钥没有 —— 而多台机器
+	// 共用一把密钥正是最常见的部署方式。于是 B 机器能把 A 机器正在用的账号
+	// complete 掉，那个账号立刻被别人领走，而 A 还在等验证码。
+	//
+	// 默认空串表示"没有自报身份"，行为与升级前完全一致；一旦调用方开始带
+	// caller_id，它的租约就只有它自己能收尾。
+	{name: "045_leases_caller", sql: `ALTER TABLE account_leases ADD COLUMN caller_id TEXT NOT NULL DEFAULT ''`},
 }
 
 // accountIndexes 是 accounts 上的全部索引，定义只此一处。

@@ -315,6 +315,11 @@ type Lease struct {
 	APIKeyID   int64 `json:"api_key_id"`
 	AcquiredAt int64 `json:"acquired_at"`
 	ExpiresAt  int64 `json:"expires_at"`
+	// CallerID 是自报身份的调用方标识，用于多台机器共用同一把密钥的场景。
+	//
+	// 空串表示这次没自报身份，一切按密钥粒度走（升级前的行为）。
+	// omitempty：没用这个功能的调用方，响应里不该凭空多出一个字段。
+	CallerID string `json:"caller_id,omitempty"`
 }
 
 // User 是后台登录账号。

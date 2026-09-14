@@ -232,19 +232,19 @@ func TestLeaseExclusive(t *testing.T) {
 	ctx := context.Background()
 	id := mkAccount(t, st, "lease@o.com", 0, 0)
 
-	if _, err := st.AcquireLease(ctx, id, 1, time.Minute); err != nil {
+	if _, err := st.AcquireLease(ctx, id, 1, "", time.Minute); err != nil {
 		t.Fatalf("首次申请租约应成功: %v", err)
 	}
-	if _, err := st.AcquireLease(ctx, id, 2, time.Minute); err != ErrLeased {
+	if _, err := st.AcquireLease(ctx, id, 2, "", time.Minute); err != ErrLeased {
 		t.Fatalf("其他 Key 应被拒绝，实际 %v", err)
 	}
-	if _, err := st.AcquireLease(ctx, id, 1, time.Minute); err != nil {
+	if _, err := st.AcquireLease(ctx, id, 1, "", time.Minute); err != nil {
 		t.Fatalf("同一个 Key 应可续租: %v", err)
 	}
-	if err := st.ReleaseLease(ctx, id, 1); err != nil {
+	if err := st.ReleaseLease(ctx, id, 1, ""); err != nil {
 		t.Fatalf("释放租约失败: %v", err)
 	}
-	if _, err := st.AcquireLease(ctx, id, 2, time.Minute); err != nil {
+	if _, err := st.AcquireLease(ctx, id, 2, "", time.Minute); err != nil {
 		t.Fatalf("释放后其他 Key 应可获取: %v", err)
 	}
 }
@@ -256,7 +256,7 @@ func TestClaimFreeAccountSkipsLeased(t *testing.T) {
 	a := mkAccount(t, st, "free1@o.com", 0, 0)
 	mkAccount(t, st, "free2@o.com", 0, 0)
 
-	if _, err := st.AcquireLease(ctx, a, 1, time.Minute); err != nil {
+	if _, err := st.AcquireLease(ctx, a, 1, "", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	got, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 2, TTL: time.Minute})
@@ -504,7 +504,7 @@ func TestClaimProjectIsolation(t *testing.T) {
 	if err != nil || got.ID != a {
 		t.Fatalf("首次领取应拿到账号: %v", err)
 	}
-	if err := st.ReleaseLease(ctx, a, 1); err != nil {
+	if err := st.ReleaseLease(ctx, a, 1, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.RecordProjectUse(ctx, a, "siteA", ProjectSuccess); err != nil {
@@ -524,7 +524,7 @@ func TestClaimProjectIsolation(t *testing.T) {
 	if err != nil || got2.ID != a {
 		t.Fatalf("换项目应能领到同一个账号: %v", err)
 	}
-	_ = st.ReleaseLease(ctx, a, 1)
+	_ = st.ReleaseLease(ctx, a, 1, "")
 	// 不带项目标识时退回原语义，只看租约。
 	if _, _, err := st.ClaimFreeAccount(ctx, ClaimOptions{APIKeyID: 1, TTL: time.Minute}); err != nil {
 		t.Fatalf("不带项目标识应保持原有语义: %v", err)
@@ -590,7 +590,7 @@ func TestDeleteAccountCleansProjects(t *testing.T) {
 	if err := st.RecordProjectUse(ctx, a, "siteX", ProjectSuccess); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.AcquireLease(ctx, a, 1, time.Minute); err != nil {
+	if _, err := st.AcquireLease(ctx, a, 1, "", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetAccountTags(ctx, a, []string{"批次A"}); err != nil {
@@ -664,5 +664,72 @@ func TestPurgeKeepsAuditLogs(t *testing.T) {
 	reveal, _, _ = st.ListFetchLogs(ctx, LogFilter{Type: "reveal"})
 	if len(reveal) != 1 {
 		t.Fatalf("超过 %d 天的审计日志应被清掉，实际剩 %d 条", AuditKeepDays, len(reveal))
+	}
+}
+
+// 多台机器共用一把密钥时，租约要归属到机器，而不只是到密钥。
+//
+// 这是原来真实存在的洞：收尾只校验 api_key_id，于是 B 机器能把 A 机器
+// 正在用的账号 complete 掉，那个账号立刻被别人领走，而 A 还在等验证码。
+func TestLeaseBelongsToCallerNotJustKey(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	id := mkAccount(t, st, "caller@o.com", 0, 0)
+
+	// A 机器领走，自报身份。
+	if _, err := st.AcquireLease(ctx, id, 1, "worker-a", time.Minute); err != nil {
+		t.Fatalf("A 领取失败: %v", err)
+	}
+
+	// 同一把密钥的 B 机器不能抢。
+	if _, err := st.AcquireLease(ctx, id, 1, "worker-b", time.Minute); err != ErrLeased {
+		t.Fatalf("同密钥不同机器应被拒，得到 %v", err)
+	}
+	// 也不能替 A 释放。
+	if err := st.ReleaseLease(ctx, id, 1, "worker-b"); err != nil {
+		t.Fatalf("释放不该报错: %v", err)
+	}
+	if l, _ := st.GetLease(ctx, id); l == nil {
+		t.Fatal("B 把 A 的租约释放掉了")
+	}
+
+	// A 自己续租没问题。
+	if _, err := st.AcquireLease(ctx, id, 1, "worker-a", time.Minute); err != nil {
+		t.Fatalf("A 续租失败: %v", err)
+	}
+	// A 能释放自己的。
+	if err := st.ReleaseLease(ctx, id, 1, "worker-a"); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := st.GetLease(ctx, id); l != nil {
+		t.Fatal("A 应当能释放自己的租约")
+	}
+}
+
+// 不自报身份的调用方必须维持升级前的行为，否则升级会打断在用的调用方。
+func TestLeaseWithoutCallerKeepsOldBehaviour(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	id := mkAccount(t, st, "legacy@o.com", 0, 0)
+
+	// 老调用方：不带 caller_id。
+	if _, err := st.AcquireLease(ctx, id, 1, "", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// 同一把密钥照样能续租 —— 这正是升级前的语义。
+	if _, err := st.AcquireLease(ctx, id, 1, "", time.Minute); err != nil {
+		t.Fatalf("同密钥续租不该被拒: %v", err)
+	}
+	// 换一把密钥仍然拒绝。
+	if _, err := st.AcquireLease(ctx, id, 2, "", time.Minute); err != ErrLeased {
+		t.Fatalf("跨密钥应被拒，得到 %v", err)
+	}
+	// 租约上没记身份时，带着身份来的请求也能释放 ——
+	// 不能因为升级把在途的老租约锁死。
+	if err := st.ReleaseLease(ctx, id, 1, "worker-a"); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := st.GetLease(ctx, id); l != nil {
+		t.Fatal("老租约应当能被释放")
 	}
 }

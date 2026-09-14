@@ -8,10 +8,10 @@
 | 前缀 | 认证 | 用途 |
 |---|---|---|
 | `/api/admin` | 会话 Cookie（`okc_session`，httpOnly） | 管理后台，前后端同源部署 |
+| `/api/v1` | `Authorization: Bearer <api_key>` | 对外开放，供第三方调用 |
 
 API 密钥的明文形如 `kl_xxxxxxxx`。前缀只是给人看的，认证按整串的哈希查表、
 从不校验前缀 —— 因此**早先签发的 `okc_` 开头的密钥照常可用**，不必重新生成。
-| `/api/v1` | `Authorization: Bearer <api_key>` | 对外开放，供第三方调用 |
 
 ## 数据类型
 
@@ -164,7 +164,7 @@ curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
 
 #### 没取到邮件时
 
-**返回 200，不是 204。** 从 v0.5.0 起改的，理由是 204 的语义是「无内容」——
+**返回 200，不是 204。** 从 v0.4.1 起改的，理由是 204 的语义是「无内容」——
 HTTP 规定它的响应体必须为空，于是调用方拿到一片空白，和超时、和接口挂了
 长得一模一样。而「过滤条件内没有匹配的邮件」是一次**成功**的查询，只是结果为空。
 
@@ -222,8 +222,8 @@ HTML 会先去掉标签再匹配，`script` 与 `style` 整块丢弃，避免撞
 | 端点 | 说明 |
 |---|---|
 | `POST /api/v1/mail/list`（亦可 `GET`） | 取最近若干封，参数同上但忽略 `wait` |
-| `POST /api/v1/mail/claim`（亦可 `GET`） | 按分类领取一个空闲账号并加租约。参数 `category_id`、`lease`、`project_key`。**缺省只返回租约获取之后到达的邮件**，避免把上一轮的旧验证码当成新的。带 `project_key` 时启用项目隔离：已在该项目上成功用过的账号不会被再次领取，换个项目照样能用。取件失败时租约会被自动退回，不占用账号 |
-| `POST /api/v1/mail/complete/{account_id}` | 上报一次使用的结局并释放账号。body `{result, project_key?, cooldown_seconds?}`，`result` 取 `success` 或 `fail`。**只有 success 才在项目维度记账**——失败的原因五花八门，下次重试完全合理。fail 会给账号加冷却（默认 10 分钟），避免它立刻被下一个调用方拿到又失败一次。只有租约持有者能调用 |
+| `POST /api/v1/mail/claim`（亦可 `GET`） | 按分类领取一个空闲账号并加租约。参数 `category_id`、`lease`、`project_key`、`caller_id`。**缺省只返回租约获取之后到达的邮件**，避免把上一轮的旧验证码当成新的。带 `project_key` 时启用项目隔离：已在该项目上成功用过的账号不会被再次领取，换个项目照样能用。取件失败时租约会被自动退回，不占用账号 |
+| `POST /api/v1/mail/complete/{account_id}` | 上报一次使用的结局并释放账号。body `{result, project_key?, caller_id?, cooldown_seconds?}`，`result` 取 `success` 或 `fail`。**只有 success 才在项目维度记账**——失败的原因五花八门，下次重试完全合理。fail 会给账号加冷却（默认 10 分钟），避免它立刻被下一个调用方拿到又失败一次。只有租约持有者能调用；多机共用一把密钥时按 `caller_id` 区分持有者 |
 | `POST /api/v1/mail/raw`（亦可 `GET`） | 参数 `email`、`message_id`、`channel`，返回原始 MIME 供 .eml 下载 |
 | `POST /api/v1/mail/export`（亦可 `GET`） | 在线取件后流式输出。`format=csv\|json`，`limit` 默认 50 上限 200 |
 | `POST /api/v1/mail/lease/{account_id}/release`（亦可 `DELETE /api/v1/mail/lease/{account_id}`） | 提前释放本 Key 持有的租约 |
@@ -259,6 +259,42 @@ curl -X POST -H "Authorization: Bearer kl_xxx" -H 'Content-Type: application/jso
 
 不带 `project_key` 时退回原来的语义（只看租约），老的调用方不受影响。
 
+### 多台机器共用一把密钥：`caller_id`
+
+租约的归属原来只认到**密钥**这一级。跨密钥防住了，同密钥没有——
+而多台机器共用一把密钥正是最常见的部署方式。于是 B 机器能把 A 机器
+正在用的账号收尾掉，那个账号立刻被别人领走，**而 A 还在等验证码**。
+两方拿到同一个邮箱，验证码发给了错的那一方。
+
+领取时自报身份，收尾时带上同一个值：
+
+```bash
+# A 机器领号，自报身份
+curl -X POST -H "Authorization: Bearer kl_xxx" -H 'Content-Type: application/json' \
+  -d '{"project_key":"siteA","caller_id":"worker-07","lease":300}' \
+  "https://console.example.com/api/v1/mail/claim"
+
+# 收尾必须带同一个 caller_id
+curl -X POST -H "Authorization: Bearer kl_xxx" -H 'Content-Type: application/json' \
+  -d '{"result":"success","project_key":"siteA","caller_id":"worker-07"}' \
+  "https://console.example.com/api/v1/mail/complete/1024"
+```
+
+换一台机器来收尾会拿到 `403 LEASE_DENIED`，错误信息里会**点名当前持有者**，
+而不是笼统地说"属于其他调用方"——后者会让人以为是换错了密钥，
+而实际该做的是带上自己的 `caller_id`。
+
+三条规则：
+
+- **自愿启用。** 不带 `caller_id` 的调用方行为与升级前完全一致，一个字都不用改。
+- **一旦带上就受保护。** 租约记了身份之后，别的机器既领不走也收不了尾。
+- **老租约不会被锁死。** 升级前建立的租约没有身份，在途期间谁都能正常收尾，
+  不会因为一次升级把它们卡住。
+
+最长 64 个字符。超长直接报 `400` 而不是截断——截断会让两台前缀相同的机器
+悄悄变成同一个身份，那正好把上面要堵的洞又打开了，而且毫无迹象。
+值不转小写：这里通常填主机名或容器 ID，大小写是它本来的样子。
+
 ### 错误码
 
 | HTTP | code | 含义与处理 |
@@ -266,7 +302,7 @@ curl -X POST -H "Authorization: Bearer kl_xxx" -H 'Content-Type: application/jso
 | 200 | `NO_MESSAGE` | 过滤条件内没有邮件，或 `wait` 等满。**不是错误**，见「没取到邮件时」 |
 | 400 | `BAD_REQUEST` / `SCOPE_REQUIRED` / `BATCH_TOO_LARGE` | 参数问题 |
 | 401 | `UNAUTHORIZED` | Key 缺失、错误或已吊销 |
-| 403 | `SCOPE_DENIED` / `LEASE_DENIED` / `EXPORT_DENIED` / `IP_DENIED` | 权限不足 |
+| 403 | `SCOPE_DENIED` / `LEASE_DENIED` / `EXPORT_DENIED` / `IP_DENIED` | 权限不足。`LEASE_DENIED` 会点名租约当前的持有者 |
 | 404 | `ACCOUNT_NOT_FOUND` / `NO_FREE_ACCOUNT` | 目标不存在。带 `project_key` 时 `NO_FREE_ACCOUNT` 的消息会说明该项目已用掉多少个，区分"这个项目用完了"与"池子空了"——两者处置完全不同 |
 | 409 | `ACCOUNT_DISABLED` / `ACCOUNT_LEASED` | 后者带 `data.remaining_seconds` |
 | 423 | `TOKEN_INVALID` | 授权码已失效，需重新导入。**没有缓存邮件可回退** |

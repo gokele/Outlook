@@ -171,7 +171,13 @@ func (s *Server) handleMailLatest(w http.ResponseWriter, r *http.Request) {
 			if n > 1800 {
 				n = 1800
 			}
-			l, lerr := s.st.AcquireLease(r.Context(), acc.ID, key.ID, time.Duration(n)*time.Second)
+			caller, cerr := callerIDOf(r)
+			if cerr != nil {
+				writeError(w, r, cerr, s.log)
+				return
+			}
+			l, lerr := s.st.AcquireLease(r.Context(), acc.ID, key.ID, caller,
+				time.Duration(n)*time.Second)
 			if lerr != nil {
 				writeError(w, r, mapStoreError(lerr), s.log)
 				return
@@ -244,8 +250,14 @@ func (s *Server) handleMailClaim(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	projectKey := q.Get("project_key")
+	caller, cerr := callerIDOf(r)
+	if cerr != nil {
+		writeError(w, r, cerr, s.log)
+		return
+	}
 	acc, lease, err := s.st.ClaimFreeAccount(r.Context(), store.ClaimOptions{
-		CategoryID: catID, APIKeyID: key.ID, TTL: ttl, ProjectKey: projectKey,
+		CategoryID: catID, APIKeyID: key.ID, TTL: ttl,
+		ProjectKey: projectKey, CallerID: caller,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -284,7 +296,7 @@ func (s *Server) handleMailClaim(w http.ResponseWriter, r *http.Request) {
 		//
 		// ErrNoMessage 不在此列：那是领取成功的正常结局 ——
 		// 账号归你了，邮件稍后才会到。
-		if rerr := s.st.ReleaseLease(r.Context(), acc.ID, key.ID); rerr != nil {
+		if rerr := s.st.ReleaseLease(r.Context(), acc.ID, key.ID, caller); rerr != nil {
 			s.log.Warn("取件失败后释放租约失败，该账号将被占用到租约过期",
 				"account", acc.Email, "err", rerr)
 		}
@@ -300,7 +312,7 @@ func (s *Server) handleMailClaim(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, payload)
 }
 
-// handleReleaseLease 提前释放本 Key 持有的租约。
+// handleReleaseLease 提前释放本调用方持有的租约。
 func (s *Server) handleReleaseLease(w http.ResponseWriter, r *http.Request) {
 	key := apiKeyOf(r)
 	id, err := pathID(r)
@@ -308,7 +320,22 @@ func (s *Server) handleReleaseLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err, s.log)
 		return
 	}
-	if err := s.st.ReleaseLease(r.Context(), id, key.ID); err != nil {
+	caller, cerr := callerIDOf(r)
+	if cerr != nil {
+		writeError(w, r, cerr, s.log)
+		return
+	}
+	// 租约记了 caller_id 而这次对不上，就明说是归属问题。
+	// 否则 DELETE 会一行都删不掉而照样回 released:true，
+	// 调用方以为释放成功，实际那个账号还握在别的机器手里。
+	if lease, lerr := s.st.GetLease(r.Context(), id); lerr == nil && lease != nil {
+		if lease.APIKeyID != key.ID || !leaseCallerMatches(lease.CallerID, caller) {
+			writeError(w, r, newAPIError(403, "LEASE_DENIED",
+				leaseDeniedMsg(lease.CallerID)), s.log)
+			return
+		}
+	}
+	if err := s.st.ReleaseLease(r.Context(), id, key.ID, caller); err != nil {
 		writeError(w, r, err, s.log)
 		return
 	}
@@ -561,9 +588,14 @@ func (s *Server) handleCompleteLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, lerr, s.log)
 		return
 	}
-	if lease != nil && lease.APIKeyID != key.ID {
+	caller, cerr := callerIDOf(r)
+	if cerr != nil {
+		writeError(w, r, cerr, s.log)
+		return
+	}
+	if lease != nil && (lease.APIKeyID != key.ID || !leaseCallerMatches(lease.CallerID, caller)) {
 		writeError(w, r, newAPIError(403, "LEASE_DENIED",
-			"该账号的租约属于其他调用方"), s.log)
+			leaseDeniedMsg(lease.CallerID)), s.log)
 		return
 	}
 
@@ -581,7 +613,7 @@ func (s *Server) handleCompleteLease(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if rerr := s.st.ReleaseLease(r.Context(), id, key.ID); rerr != nil {
+	if rerr := s.st.ReleaseLease(r.Context(), id, key.ID, caller); rerr != nil {
 		writeError(w, r, rerr, s.log)
 		return
 	}
@@ -677,4 +709,46 @@ func (s *Server) writeNoMessage(w http.ResponseWriter, r *http.Request,
 		out["scanned"] = 0
 	}
 	writeStatus(w, r, http.StatusOK, "NO_MESSAGE", reason, out)
+}
+
+// callerIDOf 取出调用方自报的身份标识。
+//
+// 多台机器共用一把密钥时，光有密钥分不出谁是谁：B 机器能把 A 机器正在用的
+// 账号收尾掉，那个账号立刻被别人领走，而 A 还在等验证码。带上 caller_id
+// 之后，这张租约就只有 A 能动。
+//
+// 值不做校验只做限长：主机名、容器 ID、worker-07 都是合法的写法，
+// 规定格式只会把人挡在门外。超长则直接报错而不是截断 —— 截断会让两台
+// 前缀相同的机器悄悄变成同一个身份，那比报错危险得多。
+func callerIDOf(r *http.Request) (string, *APIError) {
+	v := store.NormalizeCallerID(r.URL.Query().Get("caller_id"))
+	if len(v) > store.MaxCallerIDLen {
+		return "", newAPIError(400, "BAD_REQUEST",
+			fmt.Sprintf("caller_id 最长 %d 个字符，当前 %d", store.MaxCallerIDLen, len(v)))
+	}
+	return v, nil
+}
+
+// leaseCallerMatches 判断这次请求能不能动这张租约。
+//
+// 租约上没记身份就一律放行：那是升级前建的租约，或者调用方没自报 ——
+// 那时的保证本来就只到密钥这一级，不能因为升级把在途的租约锁死。
+func leaseCallerMatches(leaseCaller, reqCaller string) bool {
+	if leaseCaller == "" {
+		return true
+	}
+	return leaseCaller == store.NormalizeCallerID(reqCaller)
+}
+
+// leaseDeniedMsg 说清楚被拒的原因，并直接给出该怎么办。
+//
+// 只说"租约属于其他调用方"会让人以为是换了一把密钥，而多机部署里
+// 最常见的情形恰恰是同一把密钥、不同机器 —— 那时该做的是带上自己的
+// caller_id，而不是去查密钥。
+func leaseDeniedMsg(leaseCaller string) string {
+	if leaseCaller == "" {
+		return "该账号的租约属于其他调用方"
+	}
+	return fmt.Sprintf("该账号的租约属于调用方 %q。"+
+		"多台机器共用一把密钥时，收尾请带上与领取时相同的 caller_id", leaseCaller)
 }
