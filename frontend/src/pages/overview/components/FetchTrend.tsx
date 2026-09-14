@@ -1,10 +1,9 @@
 import { Card, Empty, Flex, Segmented, Tooltip as AntTooltip, Typography, theme } from 'antd';
 import { useMemo, useState } from 'react';
 import {
-  Bar,
   CartesianGrid,
-  ComposedChart,
   Line,
+  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -68,9 +67,12 @@ interface Row {
  * 能提前动手的信号: 成功率从 98% 滑到 91% 时账号还能用, 等滑到 60% 才发现,
  * 那一批多半已经废了。
  *
- * 柱子是量、折线是成功率, 两者必须一起看: 某天只有 3 次请求挂了 2 次,
- * 成功率 33% 看着吓人, 其实什么都没发生。只画成功率会天天虚惊,
- * 只画量又看不出好坏。
+ * 只画一条成功率线。次数不另画一层柱子, 而是放进悬浮提示 ——
+ * 一张图同时讲"量"和"成败"会把两件事都讲不清楚, 而真正要回答的问题
+ * 只有一个: 这条线是在往上还是往下。
+ *
+ * 低量那天的尖刺靠提示解释: 某天只有 3 次请求挂了 2 次, 线上是一个掉到
+ * 33% 的尖, 悬浮看到"成功 1 / 共 3"就知道什么都没发生。
  */
 export function FetchTrend({ data }: FetchTrendProps) {
   const { token } = theme.useToken();
@@ -155,8 +157,8 @@ export function FetchTrend({ data }: FetchTrendProps) {
         </Typography.Text>
       </Flex>
 
-      <ResponsiveContainer width="100%" height={220}>
-        <ComposedChart data={rows} margin={{ top: 8, right: 4, bottom: 0, left: -16 }}>
+      <ResponsiveContainer width="100%" height={200}>
+        <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
           <CartesianGrid stroke={token.colorSplit} vertical={false} />
           <XAxis
             dataKey="day"
@@ -167,30 +169,26 @@ export function FetchTrend({ data }: FetchTrendProps) {
             interval="preserveStartEnd"
             minTickGap={24}
           />
-          {/* 左轴是次数, 右轴是百分比 —— 量纲不同, 必须分开两根轴 */}
           <YAxis
-            yAxisId="count"
+            domain={[0, 100]}
+            /*
+              只标 0 / 70 / 90 这三个有意义的值，不标 100。
+              标了 100 反而看不到 90：两者在这个高度上只差十几像素，
+              recharts 判定会撞在一起，直接把 90 丢掉 —— 而 90 正是
+              「健康」的那条线，丢的偏偏是最该看的那个。
+            */
+            ticks={[0, 70, 90]}
+            tickFormatter={(v: number) => `${v}%`}
             tick={{ fill: token.colorTextQuaternary, fontSize: 11 }}
             axisLine={false}
             tickLine={false}
             width={48}
           />
-          <YAxis
-            yAxisId="rate"
-            orientation="right"
-            domain={[0, 100]}
-            ticks={[0, 70, 90, 100]}
-            tickFormatter={(v: number) => `${v}%`}
-            tick={{ fill: token.colorTextQuaternary, fontSize: 11 }}
-            axisLine={false}
-            tickLine={false}
-            width={40}
-          />
           {/* 90 与 70 正是配色换档的两个位置 */}
-          <ReferenceLine yAxisId="rate" y={90} stroke={token.colorSplit} strokeDasharray="3 4" />
-          <ReferenceLine yAxisId="rate" y={70} stroke={token.colorSplit} strokeDasharray="3 4" />
+          <ReferenceLine y={90} stroke={token.colorSplit} strokeDasharray="3 4" />
+          <ReferenceLine y={70} stroke={token.colorSplit} strokeDasharray="3 4" />
           <Tooltip
-            cursor={{ fill: token.colorFillQuaternary }}
+            separator=": "
             contentStyle={{
               background: token.colorBgElevated,
               border: `1px solid ${token.colorBorderSecondary}`,
@@ -198,34 +196,19 @@ export function FetchTrend({ data }: FetchTrendProps) {
               fontSize: 12,
             }}
             labelStyle={{ color: token.colorText }}
-            // value 可能是 null（那天没有请求）也可能是 undefined，
-            // recharts 的类型把两者都算进来，这里一并当成"没有数据"。
-            formatter={(value, name) =>
-              value === null || value === undefined
-                ? ['—', name]
-                : [name === meta.rateWord ? `${value}%` : value, name]
-            }
-          />
-          {/* 失败堆在下面贴着基线, 一眼看得出有没有 */}
-          <Bar
-            yAxisId="count"
-            dataKey="fail"
-            stackId="n"
-            name={meta.failWord}
-            fill={token.colorError}
-            fillOpacity={0.75}
-            maxBarSize={16}
-          />
-          <Bar
-            yAxisId="count"
-            dataKey="ok"
-            stackId="n"
-            name={meta.okWord}
-            fill={token.colorFillSecondary}
-            maxBarSize={16}
+            /*
+              次数放在提示里，不再单画一层柱子。
+              光看一条成功率线会天天虚惊：某天只有 3 次请求挂了 2 次，
+              线上就是一个掉到 33% 的尖，而其实什么都没发生。
+              悬浮一下看到"成功 1 / 失败 2"，这件事立刻就清楚了。
+            */
+            formatter={(value, _name, item) => {
+              const row = item?.payload as Row | undefined;
+              if (value === null || value === undefined || !row) return ['—', '没有请求'];
+              return [`${value}%（${meta.okWord} ${row.ok} / 共 ${row.ok + row.fail}）`, meta.rateWord];
+            }}
           />
           <Line
-            yAxisId="rate"
             type="monotone"
             dataKey="rate"
             name={meta.rateWord}
@@ -237,7 +220,7 @@ export function FetchTrend({ data }: FetchTrendProps) {
             // 而真相可能是服务停了三天。
             connectNulls={false}
           />
-        </ComposedChart>
+        </LineChart>
       </ResponsiveContainer>
     </Card>
   );
