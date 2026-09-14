@@ -148,6 +148,14 @@ export interface SuspendedClient {
 }
 
 /** 总览统计 */
+
+/** 某一天的一个格子。ok 与 fail 的含义随所在序列变化 */
+export interface DailyPoint {
+  /** 那一天 UTC 零点的 Unix 秒 */
+  day: number;
+  ok: number;
+  fail: number;
+}
 export interface Overview {
   total: number;
   /**
@@ -167,6 +175,18 @@ export interface Overview {
    * 每条日志都显示成功, 而调用方一直拿不到码, 这一项是唯一能看出来的地方。
    */
   code_7d: { hit: number; miss: number };
+  /**
+   * 近 30 天按天的取件与验证码提取。
+   *
+   * 7 天那两个数只说得出"现在好不好", 说不出"在变好还是变坏" ——
+   * 而后者才是能提前动手的那个信号: 成功率从 98% 滑到 91% 时账号还能用,
+   * 等滑到 60% 才发现, 那一批多半已经废了。
+   *
+   * 没有数据的那天也会有点(ok 与 fail 都是 0), 不是被跳过 ——
+   * 跳过会让折线把前后两天连起来, 看上去像是一直在稳定运行。
+   */
+  fetch_daily: DailyPoint[];
+  code_daily: DailyPoint[];
   token_tiers: { cached: number; fetch: number; rotate: number };
   scheduler: SchedulerHealth;
   suspended_clients: SuspendedClient[];

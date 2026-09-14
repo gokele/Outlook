@@ -150,3 +150,85 @@ func (s *Store) purgeLogStats(ctx context.Context) error {
 	_, err := s.exec(ctx, `DELETE FROM log_daily_stats WHERE day < ?`, cutoff)
 	return err
 }
+
+// DailyPoint 是某一天的一个格子。
+type DailyPoint struct {
+	// Day 是那一天 UTC 零点的 Unix 秒，前端据此显示日期。
+	Day int64 `json:"day"`
+	// Ok 与 Fail 的含义随 metric 变化：取件是成功/失败，验证码是提取到/没提取到。
+	Ok   int `json:"ok"`
+	Fail int `json:"fail"`
+}
+
+// FetchDaily 返回最近 days 天的取件成败，按天排列，缺的那天补零。
+//
+// 与 FetchStatsSince 读的是同一张汇总表，代价一样与日志量无关 ——
+// 那张表一天一个格子，30 天最多读几十行，十亿账号时也是几十行。
+//
+// 补零不是可有可无：断掉的那几天如果直接跳过，折线会把前后两天连起来，
+// 看上去像是"那几天一直在稳定运行"，而真相可能是服务停了三天。
+func (s *Store) FetchDaily(ctx context.Context, days int) ([]DailyPoint, error) {
+	return s.dailySeries(ctx, metricFetchResult, "ok", "fail", days)
+}
+
+// CodeDaily 返回最近 days 天的验证码提取成败。
+//
+// 取件成功不等于拿到了码：正则写错或对方改了邮件模板时，取件那条线一直好看，
+// 而调用方一直拿不到码。两条线分开画，才看得出是哪一段出了问题。
+func (s *Store) CodeDaily(ctx context.Context, days int) ([]DailyPoint, error) {
+	return s.dailySeries(ctx, metricCodeResult, "hit", "miss", days)
+}
+
+// dailySeries 把某个维度按天取出来。okValue 与 failValue 是该维度里代表
+// "成"与"败"的取值，其余取值一律忽略。
+func (s *Store) dailySeries(ctx context.Context, metric, okValue, failValue string,
+	days int) ([]DailyPoint, error) {
+
+	if days <= 0 {
+		days = 30
+	}
+	today := dayIndex(time.Now().Unix())
+	from := today - int64(days) + 1
+
+	rows, err := s.query(ctx,
+		`SELECT day, value, SUM(n) FROM log_daily_stats
+		 WHERE metric = ? AND day >= ? GROUP BY day, value`, metric, from)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type pair struct{ ok, fail int }
+	byDay := map[int64]*pair{}
+	for rows.Next() {
+		var day, n int64
+		var value string
+		if err := rows.Scan(&day, &value, &n); err != nil {
+			return nil, err
+		}
+		p := byDay[day]
+		if p == nil {
+			p = &pair{}
+			byDay[day] = p
+		}
+		switch value {
+		case okValue:
+			p.ok += int(n)
+		case failValue:
+			p.fail += int(n)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]DailyPoint, 0, days)
+	for d := from; d <= today; d++ {
+		pt := DailyPoint{Day: d * 24 * 3600}
+		if p := byDay[d]; p != nil {
+			pt.Ok, pt.Fail = p.ok, p.fail
+		}
+		out = append(out, pt)
+	}
+	return out, nil
+}

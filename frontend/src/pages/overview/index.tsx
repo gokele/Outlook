@@ -5,6 +5,7 @@ import { QueryStateView } from '@/components/common/QueryStateView';
 import { formatUnix } from '@/utils/time';
 import { CategoryDistribution } from './components/CategoryDistribution';
 import { FetchStats } from './components/FetchStats';
+import { FetchTrend } from './components/FetchTrend';
 import { SchedulerHealthCard } from './components/SchedulerHealth';
 import { StatusSummary } from './components/StatusSummary';
 import { SuspendedClients } from './components/SuspendedClients';
@@ -47,6 +48,13 @@ export default function OverviewPage() {
               </Col>
               <Col xs={24} md={12} xl={8} className="okc-rise" style={{ animationDelay: '120ms' }}>
                 <FetchStats data={data} />
+              </Col>
+              {/*
+                趋势独占一整行。三十根柱子挤进三分之一列的宽度就只剩色块,
+                看不出走向 —— 而"在变好还是变坏"正是它存在的全部理由。
+              */}
+              <Col xs={24} className="okc-rise" style={{ animationDelay: '150ms' }}>
+                <FetchTrend data={data} />
               </Col>
               <Col xs={24} md={12} xl={8} className="okc-rise" style={{ animationDelay: '180ms' }}>
                 <TokenTiers data={data} />

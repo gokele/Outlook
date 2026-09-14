@@ -316,6 +316,14 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	// 验证码提取成败。取件成功不等于拿到了码 —— 正则写错或对方改了邮件模板时，
 	// 每条日志都显示成功，而调用方一直拿不到码，这一项是唯一能看出来的地方。
 	codeStats, _ := s.st.CodeStatsSince(ctx, weekAgo)
+	// 按天的序列。7 天那两个数只说得出"现在好不好"，说不出"在变好还是变坏" ——
+	// 而后者才是能提前动手的那个信号：成功率从 98% 滑到 91% 时账号还能用，
+	// 等滑到 60% 才发现，那一批多半已经废了。
+	//
+	// 读的是同一张日汇总表，30 天最多几十行，与日志量和账号数都无关。
+	const trendDays = 30
+	fetchDaily, _ := s.st.FetchDaily(ctx, trendDays)
+	codeDaily, _ := s.st.CodeDaily(ctx, trendDays)
 	health, _ := s.sched.CheckHealth(ctx)
 	clients, _ := s.st.ListClientApps(ctx)
 
@@ -335,6 +343,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"by_category":       cats,
 		"fetch_7d":          fetch7d,
 		"code_7d":           codeStats,
+		"fetch_daily":       fetchDaily,
+		"code_daily":        codeDaily,
 		"token_tiers":       tiers,
 		"scheduler":         health,
 		"clients":           clients,
