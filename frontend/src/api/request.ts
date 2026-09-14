@@ -1,4 +1,5 @@
 import { toast } from '@/lib/feedback';
+import { explainError } from '@/lib/errors/explain';
 import type { ApiEnvelope } from './types';
 
 /** 同源部署, 统一使用相对路径前缀; 开发环境由 Vite proxy 转发到本地后端 */
@@ -150,7 +151,13 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   if (!ok) {
     const err = new ApiError(code, envelope.message || `请求失败 (${code})`, envelope.request_id ?? '');
-    if (!silent) toast.error(err.message);
+    // 轻提示只给人话那一句。原文留在 err.message 里，需要的地方
+    // （加载失败的提示框）自己去展开，别把 Go 的错误链弹到屏幕上。
+    //
+    // benign 的不弹：请求被取消（切页面、组件重挂载）会走到这里，
+    // 但那是用户自己的操作带来的正常结果，红着脸报出来只会让人以为坏了。
+    const explained = explainError(err, `请求失败 (${code})`);
+    if (!silent && !explained.benign) toast.error(explained.summary);
     throw err;
   }
 

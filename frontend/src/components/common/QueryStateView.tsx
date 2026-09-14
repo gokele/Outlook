@@ -1,5 +1,6 @@
-import { Alert, Button, Empty, Skeleton, Space } from 'antd';
+import { Alert, Button, Empty, Skeleton, Space, Typography } from 'antd';
 import type { ReactNode } from 'react';
+import { explainError } from '@/lib/errors/explain';
 
 interface QueryStateViewProps {
   isPending: boolean;
@@ -34,24 +35,42 @@ export function QueryStateView({
   }
 
   if (error) {
-    const message = error instanceof Error ? error.message : '数据加载失败';
+    /*
+      分两层说：第一行是人话，第二行是该去哪儿修，原文折叠起来。
+
+      原来这里直接把 error.message 摆出来，于是界面上出现的是
+      「UPSTREAM_ERROR: 没有可用通道: network_error: Post "https://…": 读取
+      SOCKS5 握手响应失败: EOF」—— 里面确实有能行动的信息（出口代理连不上），
+      但没人会从这串东西里读出来。原文一个字不丢，排障还得靠它。
+    */
+    const e = explainError(error, '数据加载失败');
     return (
       <div style={{ padding: 16 }}>
-      <Alert
-        type="error"
-        showIcon
-        message="数据加载失败"
-        description={
-          <Space direction="vertical" size={8}>
-            <span>{message}</span>
-            {onRetry ? (
-              <Button size="small" onClick={onRetry}>
-                重试
-              </Button>
-            ) : null}
-          </Space>
-        }
-      />
+        <Alert
+          type="error"
+          showIcon
+          message={e.summary}
+          description={
+            <Space direction="vertical" size={8} style={{ width: '100%' }}>
+              {e.action ? <span>{e.action}</span> : null}
+              {e.detail && e.detail !== e.summary ? (
+                <Typography.Paragraph
+                  type="secondary"
+                  style={{ fontSize: 12, margin: 0 }}
+                  ellipsis={{ rows: 1, expandable: true, symbol: '查看详细' }}
+                >
+                  {e.detail}
+                  {e.requestId ? `（${e.requestId}）` : ''}
+                </Typography.Paragraph>
+              ) : null}
+              {onRetry ? (
+                <Button size="small" onClick={onRetry}>
+                  重试
+                </Button>
+              ) : null}
+            </Space>
+          }
+        />
       </div>
     );
   }

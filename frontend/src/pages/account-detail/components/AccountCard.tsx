@@ -6,6 +6,7 @@ import { CopyableText } from '@/components/common/CopyableText';
 import { StatusTag } from '@/components/common/StatusTag';
 import { TagList } from '@/components/common/TagList';
 import { ACCOUNT_STATUS_META, CHANNEL_POLICY_OPTIONS, TOKEN_MAX_AGE_DAYS } from '@/constants/account';
+import { explainRaw } from '@/lib/errors/explain';
 import { formatUnix } from '@/utils/time';
 import { NoteEditor } from './NoteEditor';
 import { ProxyBinding } from './ProxyBinding';
@@ -52,6 +53,8 @@ export function AccountCard({
   const expiryUnknown = hardExpiry <= 0;
   const policyLabel =
     CHANNEL_POLICY_OPTIONS.find((item) => item.value === account.channel_policy)?.label ?? '自动';
+  // 后端的 hint 认不出这条错误时，前端按内容再认一次。两边都认不出就留空。
+  const localHint = account.last_error_hint.summary ? null : explainRaw(account.last_error ?? '');
 
   return (
     <Card
@@ -94,11 +97,20 @@ export function AccountCard({
                     {account.last_error_code ? `${account.last_error_code}：` : ''}
                     {account.last_error_hint.summary}
                   </Typography.Text>
+                ) : localHint ? (
+                  // 后端的 hint 只认 AADSTS 这类微软的错误码；网络与代理类的
+                  // 失败它给不出解释，那时前端按内容再认一次。认不出就什么都
+                  // 不加，下面的原文照常显示。
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    {localHint.summary}
+                  </Typography.Text>
                 ) : null}
                 {account.last_error_hint.action ? (
                   <Typography.Text style={{ fontSize: 13 }}>
                     {account.last_error_hint.action}
                   </Typography.Text>
+                ) : localHint?.action ? (
+                  <Typography.Text style={{ fontSize: 13 }}>{localHint.action}</Typography.Text>
                 ) : null}
                 {account.last_error ? (
                   <Typography.Text
@@ -228,21 +240,12 @@ export function AccountCard({
           ]}
         />
 
-        {account.last_error ? (
-          <Alert
-            type="error"
-            showIcon
-            message="最近一次错误"
-            description={
-              <Typography.Paragraph
-                copyable
-                style={{ marginBottom: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
-              >
-                {account.last_error}
-              </Typography.Paragraph>
-            }
-          />
-        ) : null}
+        {/*
+          这里原来还有一个「最近一次错误」的红框，直接摊开 account.last_error。
+          它是重复的：上面的状态提示框在有 last_error 时已经把同一段原文显示过了，
+          而且是分层显示的（解释在前、处置在中、原文在后）。两个框并排摆着，
+          第二个只贡献了一串 Go 的错误链，还把已经解释清楚的那条挤到了上面。
+        */}
       </Space>
     </Card>
   );

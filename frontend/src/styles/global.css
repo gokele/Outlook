@@ -678,13 +678,15 @@ body {
   }
 
   /*
-   * 文字末尾那个复制图标只有 14×22，手指点不中 —— 而它常常是把
-   * client_id、授权码这类长串弄出来的唯一办法，点不中就只能手抄。
+   * 文字末尾那几个小控件手指点不中：复制图标 14×22，「查看详细」48×19。
+   * 复制常常是把 client_id、授权码这类长串弄出来的唯一办法，点不中就只能手抄；
+   * 「查看详细」则是错误原文的唯一入口，点不开就只剩一句概括。
    * 图标本身不变大，撑开的只是可点区域；限在窄屏，宽屏上用鼠标点 14px
    * 没有问题，反倒是把行高顶开更难看。
    */
   .ant-typography-copy,
-  .ant-typography-edit {
+  .ant-typography-edit,
+  .ant-typography-expand {
     display: inline-flex;
     align-items: center;
     justify-content: center;
