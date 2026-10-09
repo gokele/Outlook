@@ -198,6 +198,24 @@ export interface MailAddress {
   address: string;
 }
 
+/** 附件元信息, 内容按需经 /mail/attachment 在线取回 */
+export interface MailAttachment {
+  name: string;
+  content_type: string;
+  size: number;
+  is_inline: boolean;
+}
+
+/** 微软侧反垃圾判定, 来自邮件里已有的头, 不产生额外请求 */
+export interface MailSpam {
+  verdict: 'spam' | 'not_spam' | 'unknown' | string;
+  /** 垃圾置信度 0-9, 读不到为 -1 */
+  scl: number;
+  spf?: string;
+  dkim?: string;
+  dmarc?: string;
+}
+
 /** 在线取回的单封邮件, 不落库 */
 export interface Message {
   id: string;
@@ -212,6 +230,8 @@ export interface Message {
   body_html: string;
   received_at: number;
   has_attachments: boolean;
+  attachments?: MailAttachment[];
+  spam?: MailSpam;
 }
 
 /** 在线取件结果, folder_coverage 说明本次实际覆盖到的文件夹 */

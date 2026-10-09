@@ -3,6 +3,7 @@ package fetcher
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"mime/quotedprintable"
 	"net/mail"
 	"net/textproto"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -30,13 +32,18 @@ const (
 	maxMIMEDepth = 12
 	// maxSnippetLen 是摘要保留的字符数，与 Graph 的 bodyPreview 量级对齐。
 	maxSnippetLen = 255
+	// maxAttachmentBytes 是单个附件解码后的取回上限，与 POP3 单封邮件上限对齐。
+	maxAttachmentBytes = 32 << 20
 )
+
+// ErrAttachmentNotFound 表示按给定的下标或文件名找不到附件。
+var ErrAttachmentNotFound = errors.New("没有找到指定的附件")
 
 // bodyParts 是一次 MIME 遍历的产物。
 type bodyParts struct {
-	text          string
-	html          string
-	hasAttachment bool
+	text        string
+	html        string
+	attachments []Attachment
 }
 
 // parseMIME 把一封原始 MIME 报文归一化成 Message，供 IMAP 与 POP3 共用。
@@ -54,14 +61,19 @@ func parseMIME(raw []byte, ch model.Channel, folder model.Folder, withBody bool)
 		Subject:           decodeHeader(m.Header.Get("Subject")),
 		From:              parseOneAddress(m.Header.Get("From")),
 		To:                parseAddressList(m.Header.Get("To")),
+		Spam:              spamFromHeaders(textproto.MIMEHeader(m.Header).Get),
 	}
 	if t, err := m.Header.Date(); err == nil {
 		msg.ReceivedAt = t.Unix()
 	}
 
 	var parts bodyParts
-	collectParts(textproto.MIMEHeader(m.Header), m.Body, 0, &parts)
-	msg.HasAttachments = parts.hasAttachment
+	walkParts(textproto.MIMEHeader(m.Header), m.Body, 0, &parts, nil)
+	if parts.attachments == nil {
+		parts.attachments = []Attachment{}
+	}
+	msg.Attachments = parts.attachments
+	msg.HasAttachments = len(parts.attachments) > 0
 	msg.Snippet = snippetFrom(parts.text, parts.html)
 	if withBody {
 		msg.BodyText = parts.text
@@ -70,9 +82,55 @@ func parseMIME(raw []byte, ch model.Channel, folder model.Folder, withBody bool)
 	return msg, nil
 }
 
-// collectParts 递归遍历 MIME 结构，取出首个 text/plain 与 text/html，并判断是否带附件。
-// 附件本身不读进内存，只记一个布尔位。
-func collectParts(hdr textproto.MIMEHeader, r io.Reader, depth int, out *bodyParts) {
+// ExtractAttachment 从原始 MIME 中取回一个附件的解码内容。
+//
+// name 非空时按文件名取第一个匹配（与列表响应里报出的名字逐字相同，
+// 都已经过编码字解码）；否则按 index —— 即列表响应 attachments 数组的下标。
+// 遍历顺序与收集元信息时完全一致，因为两者走同一条 walkParts。
+func ExtractAttachment(raw []byte, index int, name string) (Attachment, []byte, error) {
+	if name == "" && index < 0 {
+		return Attachment{}, nil, fmt.Errorf("必须提供附件的 index 或 name")
+	}
+	m, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		return Attachment{}, nil, fmt.Errorf("解析 MIME 报文失败: %w", err)
+	}
+	var parts bodyParts
+	pick := &pickAttachment{index: index, name: name}
+	walkParts(textproto.MIMEHeader(m.Header), m.Body, 0, &parts, pick)
+	if !pick.matched {
+		return Attachment{}, nil, fmt.Errorf("%w（index=%d name=%q，共 %d 个附件）",
+			ErrAttachmentNotFound, index, name, len(parts.attachments))
+	}
+	return pick.meta, pick.data, nil
+}
+
+// pickAttachment 是 ExtractAttachment 的选取状态。
+// name 非空时优先按名字匹配，否则按下标。
+type pickAttachment struct {
+	index   int
+	name    string
+	matched bool
+	meta    Attachment
+	data    []byte
+	n       int // 已扫过的附件个数，即当前附件的下标
+}
+
+// hit 判断第 n 个、名为 name 的附件是不是要找的那个。
+func (p *pickAttachment) hit(n int, name string) bool {
+	if p.name != "" {
+		return name == p.name
+	}
+	return n == p.index
+}
+
+// walkParts 递归遍历 MIME 结构：取出首个 text/plain 与 text/html，收集附件元信息；
+// pick 非空时顺带把命中的附件内容解码出来。
+//
+// 附件内容默认不留在内存：元信息只需要按 Content-Transfer-Encoding 量出
+// 解码后的字节数（流式计数，不保留内容），完整内容仅在 ExtractAttachment
+// 明确选中时才解码，且受 maxAttachmentBytes 封顶。
+func walkParts(hdr textproto.MIMEHeader, r io.Reader, depth int, out *bodyParts, pick *pickAttachment) {
 	if depth > maxMIMEDepth {
 		return
 	}
@@ -93,7 +151,7 @@ func collectParts(hdr textproto.MIMEHeader, r io.Reader, depth int, out *bodyPar
 	}
 	isMultipart := strings.HasPrefix(mediaType, "multipart/")
 	if !isMultipart && (strings.EqualFold(disp, "attachment") || filename != "") {
-		out.hasAttachment = true
+		recordAttachment(hdr, r, mediaType, filename, disp, out, pick)
 		return
 	}
 
@@ -109,7 +167,7 @@ func collectParts(hdr textproto.MIMEHeader, r io.Reader, depth int, out *bodyPar
 			if err != nil {
 				return // io.EOF 或结构损坏，已取到的部分照常返回
 			}
-			collectParts(textproto.MIMEHeader(p.Header), p, depth+1, out)
+			walkParts(textproto.MIMEHeader(p.Header), p, depth+1, out, pick)
 			_ = p.Close()
 		}
 	case mediaType == "text/plain" || mediaType == "text/html":
@@ -130,26 +188,128 @@ func collectParts(hdr textproto.MIMEHeader, r io.Reader, depth int, out *bodyPar
 	case strings.HasPrefix(mediaType, "message/"):
 		// 内嵌转发报文，不展开，也不算附件。
 	default:
-		out.hasAttachment = true
+		// 没写 disposition 也没写文件名的非文本部件（常见的内嵌图片）。
+		recordAttachment(hdr, r, mediaType, filename, disp, out, pick)
 	}
 }
 
-// readDecoded 按 Content-Transfer-Encoding 解码一个部件的内容。
-// 注意 multipart.Reader.NextPart 已经透明处理过 quoted-printable 并抹掉了该头，
-// 这里不会重复解码。
-func readDecoded(hdr textproto.MIMEHeader, r io.Reader) ([]byte, error) {
-	var rr io.Reader = io.LimitReader(r, maxBodyBytes)
-	switch strings.ToLower(strings.TrimSpace(hdr.Get("Content-Transfer-Encoding"))) {
-	case "base64":
-		rr = base64.NewDecoder(base64.StdEncoding, rr)
-	case "quoted-printable":
-		rr = quotedprintable.NewReader(rr)
+// recordAttachment 登记一个附件部件：写入元信息；选取器命中时把内容解码带出。
+func recordAttachment(hdr textproto.MIMEHeader, r io.Reader, mediaType, filename, disp string,
+	out *bodyParts, pick *pickAttachment) {
+
+	meta := Attachment{
+		Name:        decodeHeader(filename),
+		ContentType: mediaType,
+		IsInline:    strings.EqualFold(disp, "inline") || hdr.Get("Content-Id") != "",
 	}
-	b, err := io.ReadAll(rr)
+	if pick != nil && !pick.matched && pick.hit(pick.n, meta.Name) {
+		if data, err := readAttachment(hdr, r); err == nil {
+			meta.Size = int64(len(data))
+			out.attachments = append(out.attachments, meta)
+			pick.matched, pick.meta, pick.data = true, meta, data
+			pick.bump()
+			return
+		}
+		// 解码失败也得消费掉这个部件，multipart 才读得到下一个。
+		// 这个附件只登记元信息、不算命中：半截内容给出去，
+		// 调用方拿到的是一个打不开却看不出问题的文件。
+		_, _ = io.Copy(io.Discard, r)
+	} else {
+		// 未命中：流式量出解码后的字节数，不把内容留在内存。
+		n, _ := io.Copy(io.Discard, decodedReader(hdr, r))
+		meta.Size = n
+	}
+	out.attachments = append(out.attachments, meta)
+	pick.bump()
+}
+
+// bump 推进选取器的扫描计数。
+func (p *pickAttachment) bump() {
+	if p != nil {
+		p.n++
+	}
+}
+
+// readAttachment 解码一个附件的内容，带硬上限。
+func readAttachment(hdr textproto.MIMEHeader, r io.Reader) ([]byte, error) {
+	// 多读一个字节用于判断超限：LimitReader 截断的内容是不完整的文件，
+	// 安静返回会让人拿到一个打不开还看不出问题的附件。
+	data, err := io.ReadAll(io.LimitReader(decodedReader(hdr, r), maxAttachmentBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxAttachmentBytes {
+		return nil, fmt.Errorf("附件超过 %d MB 取回上限", maxAttachmentBytes>>20)
+	}
+	return data, nil
+}
+
+// readDecoded 解码一个文本部件的内容，带大小上限以防御异常大的正文。
+func readDecoded(hdr textproto.MIMEHeader, r io.Reader) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(decodedReader(hdr, r), maxBodyBytes))
 	if err != nil && len(b) == 0 {
 		return nil, err
 	}
 	return b, nil
+}
+
+// decodedReader 按 Content-Transfer-Encoding 包一层解码。
+// 注意 multipart.Reader.NextPart 已经透明处理过 quoted-printable 并抹掉了该头，
+// 顶层部件才会走到这里的 quoted-printable 分支。
+func decodedReader(hdr textproto.MIMEHeader, r io.Reader) io.Reader {
+	switch strings.ToLower(strings.TrimSpace(hdr.Get("Content-Transfer-Encoding"))) {
+	case "base64":
+		return base64.NewDecoder(base64.StdEncoding, r)
+	case "quoted-printable":
+		return quotedprintable.NewReader(r)
+	}
+	return r
+}
+
+// spamFromHeaders 从微软的反垃圾相关头解析判定，头不存在时各字段为未知值。
+// get 按头名取值（大小写不敏感），由各通道适配自己的头来源。
+func spamFromHeaders(get func(string) string) SpamInfo {
+	info := SpamInfo{Verdict: "unknown", SCL: -1}
+	// X-Forefront-Antispam-Report 形如 "CIP:1.2.3.4;SFV:SPM;SCL:5;..."
+	for _, tok := range strings.Split(get("X-Forefront-Antispam-Report"), ";") {
+		k, v, ok := strings.Cut(strings.TrimSpace(tok), ":")
+		if !ok {
+			continue
+		}
+		switch strings.ToUpper(strings.TrimSpace(k)) {
+		case "SFV":
+			switch strings.ToUpper(strings.TrimSpace(v)) {
+			case "SPM", "BLK", "SKB":
+				info.Verdict = "spam"
+			case "NSPM", "SKA":
+				info.Verdict = "not_spam"
+			}
+		case "SCL":
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				info.SCL = n
+			}
+		}
+	}
+	// Authentication-Results 形如 "spf=pass (sender IP ...); dkim=pass; dmarc=fail (p=none)"，
+	// 值后面的括号注释与参数都要剥掉。
+	for _, tok := range strings.Split(get("Authentication-Results"), ";") {
+		k, v, ok := strings.Cut(strings.TrimSpace(tok), "=")
+		if !ok {
+			continue
+		}
+		if i := strings.IndexAny(v, " ("); i >= 0 {
+			v = v[:i]
+		}
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "spf":
+			info.SPF = strings.ToLower(strings.TrimSpace(v))
+		case "dkim":
+			info.DKIM = strings.ToLower(strings.TrimSpace(v))
+		case "dmarc":
+			info.DMARC = strings.ToLower(strings.TrimSpace(v))
+		}
+	}
+	return info
 }
 
 // decodeCharset 把邮件声明的字符集转成 UTF-8。

@@ -74,6 +74,7 @@ var v1Routes = []v1Route{
 	{"取最近若干封", []string{"POST", "GET"}, "/api/v1/mail/list?email=c@o.com", []string{"PUT", "PATCH"}},
 	{"领取账号", []string{"POST", "GET"}, "/api/v1/mail/claim", []string{"PUT", "PATCH"}},
 	{"下载原文", []string{"POST", "GET"}, "/api/v1/mail/raw?email=c@o.com&message_id=x", []string{"PUT", "PATCH"}},
+	{"下载附件", []string{"POST", "GET"}, "/api/v1/mail/attachment?email=c@o.com&message_id=x&index=0", []string{"PUT", "PATCH"}},
 	{"导出邮件", []string{"POST", "GET"}, "/api/v1/mail/export?email=c@o.com", []string{"PUT", "PATCH"}},
 	{"释放租约", []string{"DELETE"}, "/api/v1/mail/lease/1", []string{"GET", "PUT"}},
 	{"释放租约(POST)", []string{"POST"}, "/api/v1/mail/lease/1/release", []string{"GET", "PUT"}},

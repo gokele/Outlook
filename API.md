@@ -63,11 +63,26 @@ API 密钥的明文形如 `kl_xxxxxxxx`。前缀只是给人看的，认证按�
   "subject": "Your verification code is 482913",
   "snippet": "Use code 482913 to continue…",
   "body_text": "…", "body_html": "…",
-  "received_at": 1757300041, "has_attachments": false
+  "received_at": 1757300041, "has_attachments": true,
+  "attachments": [
+    { "name": "invoice.pdf", "content_type": "application/pdf", "size": 12345, "is_inline": false }
+  ],
+  "spam": { "verdict": "spam", "scl": 5, "spf": "pass", "dkim": "none", "dmarc": "fail" }
 }
 ```
 
 邮件不落库，只在单次响应中存在。
+
+**`attachments` 是元信息列表，内容不随列表响应下发。** 要取文件本身走
+`/api/v1/mail/attachment`。`body=none` 时 IMAP 通道只有 `has_attachments`、
+列表为空——那条路径只拉了邮件开头一段，报出的清单会缺排在后面的附件，
+不如不报。
+
+**`spam` 是微软侧的反垃圾判定**，全部来自邮件里已有的头（`X-Forefront-Antispam-Report`
+的 SFV/SCL 与 `Authentication-Results` 的 SPF/DKIM/DMARC），不产生额外请求。
+`verdict` 取 `spam`/`not_spam`/`unknown`，`scl` 读不到时为 -1。
+注意它与 `folder` 是两回事：判定是过滤器的意见，文件夹是结局，
+"判为垃圾却躺在收件箱"完全可能发生。
 
 ## 开放 API
 
@@ -118,7 +133,7 @@ curl -sS -X POST "https://console.example.com/api/v1/mail/latest" \
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `email` / `account_id` | 必填其一 | 定位账号 |
+| `email` / `account_id` | 必填其一 | 定位账号。**`email` 支持 +tag 别名**：`alice+shop@outlook.com` 与 `alice@outlook.com` 命中同一账号，导入同理（别名在落库前归一）。注意 GET 查询串里 `+` 按标准解码为空格，别名查询请走 POST + JSON，或把 `+` 写成 `%2B` |
 | `folder` | `inbox,junk` | 取值 `inbox`、`junk`、`all`，逗号分隔 |
 | `from` / `subject` | 空 | 包含匹配，大小写不敏感 |
 | `since` | 空 | RFC 3339 或 Unix 秒，只返回晚于它的邮件 |
@@ -225,6 +240,7 @@ HTML 会先去掉标签再匹配，`script` 与 `style` 整块丢弃，避免撞
 | `POST /api/v1/mail/claim`（亦可 `GET`） | 按分类领取一个空闲账号并加租约。参数 `category_id`、`lease`、`project_key`、`caller_id`。**缺省只返回租约获取之后到达的邮件**，避免把上一轮的旧验证码当成新的。带 `project_key` 时启用项目隔离：已在该项目上成功用过的账号不会被再次领取，换个项目照样能用。取件失败时租约会被自动退回，不占用账号 |
 | `POST /api/v1/mail/complete/{account_id}` | 上报一次使用的结局并释放账号。body `{result, project_key?, caller_id?, cooldown_seconds?}`，`result` 取 `success` 或 `fail`。**只有 success 才在项目维度记账**——失败的原因五花八门，下次重试完全合理。fail 会给账号加冷却（默认 10 分钟），避免它立刻被下一个调用方拿到又失败一次。只有租约持有者能调用；多机共用一把密钥时按 `caller_id` 区分持有者 |
 | `POST /api/v1/mail/raw`（亦可 `GET`） | 参数 `email`、`message_id`、`channel`，返回原始 MIME 供 .eml 下载 |
+| `POST /api/v1/mail/attachment`（亦可 `GET`） | 在线取回单个附件的解码内容。参数 `email`/`account_id`、`message_id`、`channel`，外加 `index` 或 `name` 二选一（`name` 更稳，与列表响应里的附件名逐字相同）。需 Key 开启 `allow_body`，单个附件上限 32 MB，找不到回 404 `ATTACHMENT_NOT_FOUND` |
 | `POST /api/v1/mail/export`（亦可 `GET`） | 在线取件后流式输出。`format=csv\|json`，`limit` 默认 50 上限 200 |
 | `POST /api/v1/mail/lease/{account_id}/release`（亦可 `DELETE /api/v1/mail/lease/{account_id}`） | 提前释放本 Key 持有的租约 |
 | `POST /api/v1/accounts/list`（亦可 `GET /api/v1/accounts`） | 账号列表，受 Key 的分类范围约束 |
@@ -343,7 +359,7 @@ curl -X POST -H "Authorization: Bearer kl_xxx" -H 'Content-Type: application/jso
 | `POST /api/admin/import` | 见下。JSON 请求体，适合粘贴的小批量 |
 | `POST /api/admin/import/file` | `multipart/form-data`，字段 `file` 加 `separator`/`category_id`/`tags`/`on_duplicate`/`dry_run`。**文件大小不设上限**，后端逐行流式处理，内存占用与文件多大无关。自动识别 UTF-8 与 GBK |
 | `POST /api/admin/import/sample-verify` | `{n}` 默认 50，返回 `{ok, fail, valid_rate}` |
-| `GET /api/admin/mail` / `mail/raw` | 在线取件，语义同开放 API |
+| `GET /api/admin/mail` / `mail/raw` / `mail/attachment` | 在线取件，语义同开放 API |
 | `GET/POST/PATCH/DELETE /api/admin/categories` | 删除时 `?move_to=<id>`，不传等于置为未分类 |
 | `GET /api/admin/proxies` | 出口列表。地址一律脱敏为 `display`，明文不回传 |
 | `POST /api/admin/proxies` | `{name, url, group_id?, weight?, max_accounts?, enabled?}`，`url` 支持 http/https/socks5/socks5h |
@@ -388,6 +404,10 @@ curl -X POST -H "Authorization: Bearer kl_xxx" -H 'Content-Type: application/jso
 里面出现 `----` 完全可能；认不出六段就把多切的部分原样接回授权码——
 宁可少认一种格式，也不要把授权码截断成一个看起来正常、用起来必然失败的值。
 辅助邮箱密码可以留空。
+
+**邮箱在落库前会归一**：小写、全角转半角，并剥掉本地部分的 `+tag` 别名段。
+`alice+shop@` 与 `alice+bank@` 是同一个信箱，导入时撞批内去重，只占一个坑；
+落库与查询用的都是剥掉别名段的规范形态。
 
 ```jsonc
 // POST /api/admin/import

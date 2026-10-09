@@ -121,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/accounts/{id}", s.handleGetAccount)
 			r.Get("/mail", s.handleAdminMail)
 			r.Get("/mail/raw", s.handleAdminMailRaw)
+			r.Get("/mail/attachment", s.handleAdminMailAttachment)
 			r.Get("/categories", s.handleListCategories)
 			r.Get("/tags", s.handleListTags)
 			r.Get("/proxy-groups", s.handleListProxyGroups)
@@ -209,6 +210,8 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/mail/claim", s.handleMailClaim)
 		r.Post("/mail/raw", s.handleMailRaw)
 		r.Get("/mail/raw", s.handleMailRaw)
+		r.Post("/mail/attachment", s.handleMailAttachment)
+		r.Get("/mail/attachment", s.handleMailAttachment)
 		r.Post("/mail/export", s.handleMailExport)
 		r.Get("/mail/export", s.handleMailExport)
 

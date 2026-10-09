@@ -16,6 +16,34 @@ type Address struct {
 	Address string `json:"address"`
 }
 
+// Attachment 是附件的元信息，不含内容。内容按需经 /mail/attachment 单独取回，
+// 列表响应里只带名字、大小与类型，避免一次取件把所有附件拉进内存。
+type Attachment struct {
+	Name        string `json:"name"`
+	ContentType string `json:"content_type"`
+	Size        int64  `json:"size"`
+	// IsInline 为真表示内嵌资源（正文里以 cid: 引用的图片等），
+	// 而不是发给用户保存的文件。
+	IsInline bool `json:"is_inline"`
+}
+
+// SpamInfo 是微软侧对一封邮件的反垃圾判定，全部来自邮件里已有的头，
+// 不产生任何额外请求。
+//
+// Verdict 是过滤器的意见，Folder 才是结局：判定为垃圾的邮件完全可能
+// 躺在收件箱里，反之亦然。两者要一起看。
+type SpamInfo struct {
+	// Verdict 取 spam / not_spam / unknown，来自 X-Forefront-Antispam-Report 的 SFV 段。
+	Verdict string `json:"verdict"`
+	// SCL 是微软的垃圾置信度（0-9，越大越像垃圾），读不到为 -1。
+	SCL int `json:"scl"`
+	// SPF / DKIM / DMARC 是 Authentication-Results 里各机制的结论
+	// （pass / fail / softfail / none 等），读不到时字段缺省。
+	SPF   string `json:"spf,omitempty"`
+	DKIM  string `json:"dkim,omitempty"`
+	DMARC string `json:"dmarc,omitempty"`
+}
+
 // Message 是归一化后的邮件。只在单次请求的内存中存活，响应写出后即释放。
 type Message struct {
 	// ID 是该通道内的消息标识，用于随后拉取原始 MIME。不同通道取值不同，
@@ -33,7 +61,13 @@ type Message struct {
 	BodyText          string        `json:"body_text,omitempty"`
 	BodyHTML          string        `json:"body_html,omitempty"`
 	ReceivedAt        int64         `json:"received_at"` // Unix 秒
-	HasAttachments    bool          `json:"has_attachments"`
+	// HasAttachments 是兼容字段：等价于附件列表非空。新代码用 Attachments。
+	HasAttachments bool `json:"has_attachments"`
+	// Attachments 是附件元信息列表。需要完整 MIME 才能解析的通道
+	//（IMAP 局部取件模式）拿不到它，那时只有 HasAttachments。
+	Attachments []Attachment `json:"attachments"`
+	// Spam 是反垃圾判定。头不在时 Verdict 为 unknown。
+	Spam SpamInfo `json:"spam"`
 }
 
 // DedupKey 返回用于本次响应内去重的键。优先用 Message-ID，缺失时退化为通道内标识。

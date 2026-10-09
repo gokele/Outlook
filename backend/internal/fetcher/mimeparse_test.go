@@ -1,6 +1,8 @@
 package fetcher
 
 import (
+	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -222,5 +224,131 @@ func TestParseMIMEBig5MultipartMessage(t *testing.T) {
 	}
 	if !strings.Contains(m.BodyText, "測試郵件") {
 		t.Fatalf("multipart 部件里的 big5 正文未解码: %q", m.BodyText)
+	}
+}
+
+// attTestMIME 是一封带两个附件的固定测试邮件：一个 base64 的 PDF 附件、
+// 一个以 Content-ID 内嵌的图片（没有 disposition 与文件名，走 default 分支）。
+// PDF 的文件名用 RFC 2047 编码字书写，验证解码后再登记。
+func attTestMIME() []byte {
+	pdf := base64.StdEncoding.EncodeToString([]byte("hello attachment"))
+	return []byte("Message-ID: <att@example.com>\r\n" +
+		"Subject: with attachments\r\n" +
+		"From: svc@example.com\r\n" +
+		"Date: Mon, 01 Jan 2024 10:00:00 +0000\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=\"BB\"\r\n" +
+		"\r\n" +
+		"--BB\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n" +
+		"\r\n" +
+		"see attachment\r\n" +
+		"--BB\r\n" +
+		"Content-Type: application/pdf; name=\"=?utf-8?B?" + base64.StdEncoding.EncodeToString([]byte("报告.pdf")) + "?=\"\r\n" +
+		"Content-Disposition: attachment; filename=\"=?utf-8?B?" + base64.StdEncoding.EncodeToString([]byte("报告.pdf")) + "?=\"\r\n" +
+		"Content-Transfer-Encoding: base64\r\n" +
+		"\r\n" +
+		pdf + "\r\n" +
+		"--BB\r\n" +
+		"Content-Type: image/png\r\n" +
+		"Content-ID: <inline01@example.com>\r\n" +
+		"\r\n" +
+		"fakepngbytes\r\n" +
+		"--BB--\r\n")
+}
+
+func TestParseMIMEAttachmentMetadata(t *testing.T) {
+	m, err := parseMIME(attTestMIME(), model.ChannelPOP3, model.FolderInbox, true)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if len(m.Attachments) != 2 || !m.HasAttachments {
+		t.Fatalf("应识别出两个附件: %+v", m.Attachments)
+	}
+	pdf, img := m.Attachments[0], m.Attachments[1]
+	if pdf.Name != "报告.pdf" || pdf.ContentType != "application/pdf" {
+		t.Fatalf("PDF 附件元信息错误: %+v", pdf)
+	}
+	if pdf.Size != int64(len("hello attachment")) {
+		t.Fatalf("base64 附件应量出解码后大小，实际 %d", pdf.Size)
+	}
+	if pdf.IsInline {
+		t.Fatal("disposition 为 attachment 的不是内嵌资源")
+	}
+	if img.ContentType != "image/png" || !img.IsInline {
+		t.Fatalf("带 Content-ID 的图片应识别为内嵌: %+v", img)
+	}
+	if img.Size != int64(len("fakepngbytes")) {
+		t.Fatalf("无编码附件的大小应等于原文长度，实际 %d", img.Size)
+	}
+	if !strings.Contains(m.BodyText, "see attachment") {
+		t.Fatalf("正文不应被附件干扰: %q", m.BodyText)
+	}
+
+	// 纯文本邮件的附件列表应是空数组而不是 null，字段形状保持稳定。
+	plain, err := parseMIME([]byte("Subject: x\r\n\r\nbody\r\n"), model.ChannelIMAP, model.FolderInbox, true)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if plain.Attachments == nil || len(plain.Attachments) != 0 {
+		t.Fatalf("无附件时 Attachments 应为空数组: %#v", plain.Attachments)
+	}
+}
+
+func TestExtractAttachment(t *testing.T) {
+	raw := attTestMIME()
+
+	att, data, err := ExtractAttachment(raw, 0, "")
+	if err != nil {
+		t.Fatalf("按下标提取失败: %v", err)
+	}
+	if att.Name != "报告.pdf" || string(data) != "hello attachment" {
+		t.Fatalf("提取内容错误: %q %q", att.Name, data)
+	}
+
+	// 按名字选取应与按下标一致：列表里报出的名字是解码后的。
+	att2, data2, err := ExtractAttachment(raw, -1, "报告.pdf")
+	if err != nil || string(data2) != "hello attachment" || att2.Name != att.Name {
+		t.Fatalf("按名字提取失败: %v %+v", err, att2)
+	}
+
+	_, _, err = ExtractAttachment(raw, -1, "不存在.pdf")
+	if !errors.Is(err, ErrAttachmentNotFound) {
+		t.Fatalf("找不到附件应报 ErrAttachmentNotFound，实际 %v", err)
+	}
+	if _, _, err := ExtractAttachment(raw, 99, ""); !errors.Is(err, ErrAttachmentNotFound) {
+		t.Fatalf("下标越界应报 ErrAttachmentNotFound，实际 %v", err)
+	}
+	if _, _, err := ExtractAttachment(raw, -1, ""); err == nil {
+		t.Fatal("既无下标也无名字应报参数错误")
+	}
+}
+
+func TestSpamFromHeaders(t *testing.T) {
+	raw := "Subject: hi\r\n" +
+		"X-Forefront-Antispam-Report: CIP:1.2.3.4;SFV:SPM;SCL:6;DIR:INB\r\n" +
+		"Authentication-Results: spf=softfail (sender IP is 10.0.0.1) smtp.mailfrom=evil.com; dkim=none; dmarc=fail (p=none)\r\n" +
+		"\r\nbody\r\n"
+	m, err := parseMIME([]byte(raw), model.ChannelIMAP, model.FolderJunk, true)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if m.Spam.Verdict != "spam" || m.Spam.SCL != 6 {
+		t.Fatalf("SFV/SCL 解析错误: %+v", m.Spam)
+	}
+	if m.Spam.SPF != "softfail" || m.Spam.DKIM != "none" || m.Spam.DMARC != "fail" {
+		t.Fatalf("Authentication-Results 解析错误: %+v", m.Spam)
+	}
+
+	// 没有反垃圾头时给未知值，而不是零值（SCL 0 是一个真实的低置信判定）。
+	plain, _ := parseMIME([]byte("Subject: x\r\n\r\nb\r\n"), model.ChannelPOP3, model.FolderInbox, true)
+	if plain.Spam.Verdict != "unknown" || plain.Spam.SCL != -1 {
+		t.Fatalf("缺头时应为 unknown/-1: %+v", plain.Spam)
+	}
+
+	ns, _ := parseMIME([]byte("Subject: x\r\nX-Forefront-Antispam-Report: SFV:NSPM\r\n\r\nb\r\n"),
+		model.ChannelPOP3, model.FolderInbox, true)
+	if ns.Spam.Verdict != "not_spam" {
+		t.Fatalf("SFV:NSPM 应判为 not_spam: %+v", ns.Spam)
 	}
 }

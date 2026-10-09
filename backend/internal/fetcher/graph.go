@@ -16,10 +16,15 @@ import (
 )
 
 const (
-	// graphSelect 是列表请求取回的字段集合。
-	graphSelect = "id,internetMessageId,subject,from,toRecipients,receivedDateTime,bodyPreview,body,hasAttachments"
+	// graphSelect 是列表请求取回的字段集合。internetMessageHeaders 用于
+	// 反垃圾判定（X-Forefront-Antispam-Report 等头只在完整头里给）。
+	graphSelect = "id,internetMessageId,subject,from,toRecipients,receivedDateTime," +
+		"bodyPreview,body,hasAttachments,internetMessageHeaders"
 	// graphSelectNoBody 去掉体积最大的 body 字段，供 withBody 为假时使用，仍保留预览。
-	graphSelectNoBody = "id,internetMessageId,subject,from,toRecipients,receivedDateTime,bodyPreview,hasAttachments"
+	graphSelectNoBody = "id,internetMessageId,subject,from,toRecipients,receivedDateTime," +
+		"bodyPreview,hasAttachments,internetMessageHeaders"
+	// graphExpandAttachments 让附件元信息随列表一并返回，不必逐封逐附件再发请求。
+	graphExpandAttachments = "attachments($select=name,size,contentType,isInline)"
 	// graphPrefer 让 Graph 直接返回纯文本正文，省去在本地剥 HTML。
 	graphPrefer = `outlook.body-content-type="text"`
 	// graphMaxErrBody 限制读取错误响应体的字节数。
@@ -167,6 +172,7 @@ func (g *GraphFetcher) fetchFolder(ctx context.Context, token string, folder mod
 	}
 	q := []string{
 		"$select=" + sel,
+		"$expand=" + escapeQuery(graphExpandAttachments),
 		"$orderby=" + escapeQuery("receivedDateTime desc"),
 		"$top=" + strconv.Itoa(n),
 	}
@@ -282,15 +288,31 @@ func escapeQuery(s string) string {
 
 // graphMessage 是 Graph 消息资源里本项目关心的字段。
 type graphMessage struct {
-	ID                string           `json:"id"`
-	InternetMessageID string           `json:"internetMessageId"`
-	Subject           string           `json:"subject"`
-	From              *graphRecipient  `json:"from"`
-	ToRecipients      []graphRecipient `json:"toRecipients"`
-	ReceivedDateTime  string           `json:"receivedDateTime"`
-	BodyPreview       string           `json:"bodyPreview"`
-	Body              *graphBody       `json:"body"`
-	HasAttachments    bool             `json:"hasAttachments"`
+	ID                     string             `json:"id"`
+	InternetMessageID      string             `json:"internetMessageId"`
+	Subject                string             `json:"subject"`
+	From                   *graphRecipient    `json:"from"`
+	ToRecipients           []graphRecipient   `json:"toRecipients"`
+	ReceivedDateTime       string             `json:"receivedDateTime"`
+	BodyPreview            string             `json:"bodyPreview"`
+	Body                   *graphBody         `json:"body"`
+	HasAttachments         bool               `json:"hasAttachments"`
+	InternetMessageHeaders []graphHeaderField `json:"internetMessageHeaders"`
+	Attachments            []graphAttachment  `json:"attachments"`
+}
+
+// graphHeaderField 是 internetMessageHeaders 里的一项。
+type graphHeaderField struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// graphAttachment 是 $expand=attachments 返回的附件元信息。
+type graphAttachment struct {
+	Name        string `json:"name"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"contentType"`
+	IsInline    bool   `json:"isInline"`
 }
 
 // graphRecipient 是 Graph 的收件人结构。
@@ -322,7 +344,17 @@ func (gm graphMessage) toMessage(folder model.Folder, withBody bool) Message {
 		Subject:           gm.Subject,
 		Snippet:           truncateRunes(collapseSpaces(gm.BodyPreview), maxSnippetLen),
 		HasAttachments:    gm.HasAttachments,
+		Attachments:       []Attachment{},
+		Spam:              spamFromHeaders(gm.header),
 	}
+	for _, a := range gm.Attachments {
+		m.Attachments = append(m.Attachments, Attachment{
+			Name: a.Name, ContentType: a.ContentType, Size: a.Size, IsInline: a.IsInline,
+		})
+	}
+	// 服务端的布尔位与展开列表任一为真就算有附件：个别账号的 hasAttachments
+	// 对内嵌资源不置位，而列表是明摆着的。
+	m.HasAttachments = gm.HasAttachments || len(m.Attachments) > 0
 	if gm.From != nil {
 		m.From = gm.From.addr()
 	}
@@ -343,4 +375,14 @@ func (gm graphMessage) toMessage(folder model.Folder, withBody bool) Message {
 		m.Snippet = snippetFrom(m.BodyText, m.BodyHTML)
 	}
 	return m
+}
+
+// header 按头名取值，大小写不敏感，供 spamFromHeaders 复用同一套解析。
+func (gm graphMessage) header(name string) string {
+	for _, h := range gm.InternetMessageHeaders {
+		if strings.EqualFold(h.Name, name) {
+			return h.Value
+		}
+	}
+	return ""
 }

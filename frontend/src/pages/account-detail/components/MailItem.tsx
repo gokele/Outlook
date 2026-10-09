@@ -70,6 +70,12 @@ export function MailHeader({
           {message.from?.name && message.from?.address ? ` <${message.from.address}>` : ''}
         </Typography.Text>
         <Tag style={{ marginInlineEnd: 0 }}>{FOLDER_TEXT[message.folder] ?? message.folder}</Tag>
+        {/* 过滤器的意见与文件夹结局是两回事: 判为垃圾却躺在收件箱, 恰恰说明该关注 */}
+        {message.spam?.verdict === 'spam' ? (
+          <Tag color="warning" style={{ marginInlineEnd: 0 }}>
+            判为垃圾
+          </Tag>
+        ) : null}
         {message.channel ? (
           <Tag style={{ marginInlineEnd: 0 }}>{message.channel.toUpperCase()}</Tag>
         ) : null}

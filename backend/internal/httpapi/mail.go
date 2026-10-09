@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -522,6 +523,86 @@ func (s *Server) handleMailExport(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+}
+
+// handleAdminMailAttachment 与 handleMailAttachment 共用实现，在线取回单个附件。
+func (s *Server) handleAdminMailAttachment(w http.ResponseWriter, r *http.Request) {
+	s.serveAttachment(w, r)
+}
+
+// handleMailAttachment 在线取回单个附件的解码内容。
+func (s *Server) handleMailAttachment(w http.ResponseWriter, r *http.Request) {
+	s.serveAttachment(w, r)
+}
+
+// serveAttachment 实现附件下载：取回原始 MIME 后在内存中选取并解码指定附件。
+//
+// 与原文下载一样，附件就是正文的一部分，禁读正文的 Key 同样拿不到它。
+// index 与 name 二选一：name 优先且更稳（三条通道对附件顺序的保证不一致，
+// 而文件名与列表响应里报出的逐字相同）；index 是列表 attachments 数组的下标。
+func (s *Server) serveAttachment(w http.ResponseWriter, r *http.Request) {
+	if key := apiKeyOf(r); key != nil && !key.AllowBody {
+		writeError(w, r, newAPIError(403, "BODY_DENIED",
+			"该 Key 未开启读取邮件正文的权限"), s.log)
+		return
+	}
+	acc, err := s.resolveAccount(r)
+	if err != nil {
+		writeError(w, r, err, s.log)
+		return
+	}
+	q := r.URL.Query()
+	msgID := q.Get("message_id")
+	if msgID == "" {
+		writeError(w, r, newAPIError(400, "BAD_REQUEST", "缺少 message_id"), s.log)
+		return
+	}
+	name := q.Get("name")
+	index := -1
+	if v := q.Get("index"); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 0 {
+			writeError(w, r, newAPIError(400, "BAD_REQUEST", "index 应为非负整数"), s.log)
+			return
+		}
+		index = n
+	}
+	if name == "" && index < 0 {
+		writeError(w, r, newAPIError(400, "BAD_REQUEST", "必须提供附件的 index 或 name"), s.log)
+		return
+	}
+	ch := model.Channel(q.Get("channel"))
+	if ch == "" {
+		ch = model.ChannelGraph
+	}
+	raw, err := s.orch.Raw(r.Context(), acc, ch, msgID)
+	if err != nil {
+		writeError(w, r, mapFetchError(err), s.log)
+		return
+	}
+	att, data, err := fetcher.ExtractAttachment(raw, index, name)
+	if err != nil {
+		if errors.Is(err, fetcher.ErrAttachmentNotFound) {
+			writeError(w, r, newAPIError(404, "ATTACHMENT_NOT_FOUND", err.Error()), s.log)
+			return
+		}
+		writeError(w, r, newAPIError(502, "UPSTREAM_ERROR", err.Error()), s.log)
+		return
+	}
+	ctype := att.ContentType
+	if ctype == "" {
+		ctype = "application/octet-stream"
+	}
+	filename := att.Name
+	if filename == "" {
+		filename = "attachment"
+	}
+	w.Header().Set("Content-Type", ctype)
+	// 文件名可能含非 ASCII 与引号，FormatMediaType 负责按 RFC 2231/5987 正确编码。
+	w.Header().Set("Content-Disposition",
+		mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
 }
 
 // safeName 把邮箱转成可用于文件名的形式。

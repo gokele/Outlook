@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -501,7 +502,7 @@ func TestExportTxtFullFormat(t *testing.T) {
 	token := strings.Repeat("T", 60)
 	_, err := e.st.InsertAccount(context.Background(), &model.Account{
 		Email: "full@o.com", PasswordEnc: mustEnc(t, e, "PassW0rd!"),
-		ClientID: "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
+		ClientID:        "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
 		RefreshTokenEnc: mustEnc(t, e, token), RecoveryEmail: "rec@gmail.com",
 		RecoveryPasswordEnc: mustEnc(t, e, "RecPw123"),
 		Tenant:              "consumers", Status: model.StatusUnverified,
@@ -549,7 +550,7 @@ func TestExportTxtNoRecoveryStaysFour(t *testing.T) {
 	// 没有辅助邮箱，只有密码。
 	_, err := e.st.InsertAccount(context.Background(), &model.Account{
 		Email: "plain@o.com", PasswordEnc: mustEnc(t, e, "PassW0rd!"),
-		ClientID: "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
+		ClientID:        "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
 		RefreshTokenEnc: mustEnc(t, e, strings.Repeat("P", 60)),
 		Tenant:          "consumers", Status: model.StatusUnverified,
 	})
@@ -560,7 +561,7 @@ func TestExportTxtNoRecoveryStaysFour(t *testing.T) {
 	weirdTok := strings.Repeat("X", 30) + "----" + strings.Repeat("Y", 30)
 	_, err = e.st.InsertAccount(context.Background(), &model.Account{
 		Email: "weird@o.com", PasswordEnc: mustEnc(t, e, "PassW0rd!"),
-		ClientID: "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
+		ClientID:        "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
 		RefreshTokenEnc: mustEnc(t, e, weirdTok), RecoveryEmail: "rec@gmail.com",
 		RecoveryPasswordEnc: mustEnc(t, e, "RecPw123"),
 		Tenant:              "consumers", Status: model.StatusUnverified,
@@ -618,7 +619,7 @@ func TestExportSecretsExcludedByDefault(t *testing.T) {
 	c := e.login(t)
 	_, err := e.st.InsertAccount(context.Background(), &model.Account{
 		Email: "e5@o.com", PasswordEnc: mustEnc(t, e, "PassW0rd!"),
-		ClientID: "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
+		ClientID:        "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
 		RefreshTokenEnc: mustEnc(t, e, "SECRETTOKENVALUE"), RecoveryEmail: "rec@gmail.com",
 		RecoveryPasswordEnc: mustEnc(t, e, "RecPw123"),
 		Tenant:              "consumers", Status: model.StatusUnverified,
@@ -866,5 +867,124 @@ func TestImportAcceptsStringCategoryID(t *testing.T) {
 				t.Fatalf("应被接受，实际 %d：%+v", code, env)
 			}
 		})
+	}
+}
+
+// attStubFetcher 是一条返回固定邮件与固定原文的通道，供附件与别名的接口级用例使用。
+type attStubFetcher struct{}
+
+func (attStubFetcher) Channel() model.Channel { return model.ChannelGraph }
+func (attStubFetcher) Probe(context.Context, fetcher.Account, string) error {
+	return nil
+}
+func (attStubFetcher) FetchLatest(_ context.Context, _ fetcher.Account, _ string,
+	_ []model.Folder, _ int, _ int64, _ bool) ([]fetcher.Message, error) {
+	return []fetcher.Message{{
+		ID: "m1", Channel: model.ChannelGraph, Folder: model.FolderInbox,
+		Subject: "带附件", From: fetcher.Address{Address: "svc@example.com"},
+		ReceivedAt: time.Now().Unix(),
+	}}, nil
+}
+func (attStubFetcher) Raw(_ context.Context, _ fetcher.Account, _ string, msgID string) ([]byte, error) {
+	if msgID != "m1" {
+		return nil, fmt.Errorf("未知消息 %q", msgID)
+	}
+	pdf := "aGVsbG8gYXR0YWNobWVudA==" // base64("hello attachment")
+	return []byte("Subject: with attachments\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=\"BB\"\r\n" +
+		"\r\n" +
+		"--BB\r\n" +
+		"Content-Type: text/plain\r\n\r\nbody\r\n" +
+		"--BB\r\n" +
+		"Content-Type: application/pdf\r\n" +
+		"Content-Disposition: attachment; filename=\"report.pdf\"\r\n" +
+		"Content-Transfer-Encoding: base64\r\n" +
+		"\r\n" + pdf + "\r\n" +
+		"--BB--\r\n"), nil
+}
+func (attStubFetcher) SupportedFolders() []model.Folder {
+	return []model.Folder{model.FolderInbox, model.FolderJunk}
+}
+
+// TestMailAttachmentEndpoint 校验附件下载：按名字与按下标取回的内容是解码后的，
+// 找不到时回 404，缺参数时回 400。
+func TestMailAttachmentEndpoint(t *testing.T) {
+	e := newEnvWithFetchers(t, attStubFetcher{})
+	c := e.login(t)
+	id := e.seedAccount(t, "att@o.com", "SECRETTOKENVALUE")
+
+	w := e.doRaw(t, "/api/admin/mail/attachment?account_id="+
+		strconv.FormatInt(id, 10)+"&message_id=m1&name=report.pdf", c)
+	if w.Code != 200 {
+		t.Fatalf("按名字下载附件应返回 200，实际 %d：%s", w.Code, w.Body.String())
+	}
+	if w.Body.String() != "hello attachment" {
+		t.Fatalf("附件内容应是解码后的字节，实际 %q", w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/pdf" {
+		t.Fatalf("Content-Type 应来自附件部件，实际 %q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "report.pdf") {
+		t.Fatalf("Content-Disposition 应带文件名，实际 %q", cd)
+	}
+
+	w = e.doRaw(t, "/api/admin/mail/attachment?account_id="+
+		strconv.FormatInt(id, 10)+"&message_id=m1&index=0", c)
+	if w.Code != 200 || w.Body.String() != "hello attachment" {
+		t.Fatalf("按下标下载附件失败: %d %q", w.Code, w.Body.String())
+	}
+
+	w = e.doRaw(t, "/api/admin/mail/attachment?account_id="+
+		strconv.FormatInt(id, 10)+"&message_id=m1&name=nope.pdf", c)
+	if w.Code != 404 {
+		t.Fatalf("找不到附件应回 404，实际 %d", w.Code)
+	}
+
+	w = e.doRaw(t, "/api/admin/mail/attachment?account_id="+
+		strconv.FormatInt(id, 10)+"&message_id=m1", c)
+	if w.Code != 400 {
+		t.Fatalf("缺 index 与 name 应回 400，实际 %d", w.Code)
+	}
+}
+
+// TestMailAliasLookup 校验按 +tag 别名查询能命中规范邮箱的账号。
+// 用别名在对方站点注册、用本名来取件（或反过来）都必须找到同一行。
+//
+// 别名里的 + 在 URL 查询串里按标准解码为空格，因此 GET 必须写成 %2B；
+// 推荐的 POST + JSON 请求体没有这个问题 —— 两条路都钉住。
+func TestMailAliasLookup(t *testing.T) {
+	e := newEnvWithFetchers(t, attStubFetcher{})
+	c := e.login(t)
+	e.seedAccount(t, "user@hotmail.com", "SECRETTOKENVALUE")
+
+	code, d := e.do(t, "POST", "/api/v1/mail/latest",
+		map[string]any{"email": "user+shop@hotmail.com", "wait": 0}, nil, e.apiKey(t))
+	if code != 200 {
+		t.Fatalf("POST+JSON 按别名查询应命中账号，实际 %d：%v", code, d)
+	}
+	if !strings.Contains(fmt.Sprint(d.Data), "user@hotmail.com") {
+		t.Fatalf("响应里应回规范邮箱，实际 %v", d.Data)
+	}
+	if !strings.Contains(fmt.Sprint(d.Data), "带附件") {
+		t.Fatalf("应取到邮件，实际 %v", d.Data)
+	}
+
+	w := e.doRaw(t, "/api/admin/mail?email=user%2Bshop@hotmail.com", c)
+	if w.Code != 200 {
+		t.Fatalf("GET 按转义别名查询应命中账号，实际 %d：%s", w.Code, w.Body.String())
+	}
+
+	// 不转义的 + 会被当成空格，得到的是另一个（不存在的）地址 → 404。
+	// 这是 URL 的标准语义，文档里写清楚而不是在这里悄悄补救。
+	w = e.doRaw(t, "/api/admin/mail?email=user+shop@hotmail.com", c)
+	if w.Code != 404 {
+		t.Fatalf("未转义的 + 按空格解析后查无此号应回 404，实际 %d", w.Code)
+	}
+
+	// 别名指向不存在的账号时必须是 404，而不是静默匹配别的账号。
+	w = e.doRaw(t, "/api/admin/mail?email=ghost%2B1@hotmail.com", c)
+	if w.Code != 404 {
+		t.Fatalf("不存在的别名应回 404，实际 %d", w.Code)
 	}
 }

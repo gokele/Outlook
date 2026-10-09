@@ -96,7 +96,12 @@ const graphListBody = `{"value":[{
   "receivedDateTime":"2024-01-01T10:00:00Z",
   "bodyPreview":"你的验证码是 123456",
   "body":{"contentType":"text","content":"你的验证码是 123456"},
-  "hasAttachments":true
+  "hasAttachments":true,
+  "internetMessageHeaders":[
+    {"name":"X-Forefront-Antispam-Report","value":"CIP:1.2.3.4;SFV:SPM;SCL:5"},
+    {"name":"Authentication-Results","value":"spf=pass (sender IP is 1.2.3.4); dkim=pass; dmarc=pass"}
+  ],
+  "attachments":[{"name":"code.png","size":1024,"contentType":"image/png","isInline":false}]
 }]}`
 
 func TestGraphFetchLatestQueryAndMapping(t *testing.T) {
@@ -171,6 +176,20 @@ func TestGraphFetchLatestQueryAndMapping(t *testing.T) {
 	}
 	if !m.HasAttachments || m.Snippet == "" {
 		t.Fatalf("附件标记或摘要缺失: %+v", m)
+	}
+	// $expand 让附件元信息随列表一并返回，不必逐封再发请求。
+	if got := q.Get("$expand"); got != graphExpandAttachments {
+		t.Fatalf("$expand 不对: %q", got)
+	}
+	if len(m.Attachments) != 1 || m.Attachments[0].Name != "code.png" ||
+		m.Attachments[0].Size != 1024 || m.Attachments[0].ContentType != "image/png" ||
+		m.Attachments[0].IsInline {
+		t.Fatalf("附件元信息映射错误: %+v", m.Attachments)
+	}
+	// 反垃圾判定来自完整头，与 IMAP/POP3 共用同一套解析。
+	if m.Spam.Verdict != "spam" || m.Spam.SCL != 5 ||
+		m.Spam.SPF != "pass" || m.Spam.DKIM != "pass" || m.Spam.DMARC != "pass" {
+		t.Fatalf("反垃圾头映射错误: %+v", m.Spam)
 	}
 }
 

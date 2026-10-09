@@ -1,14 +1,18 @@
-import { Collapse, Empty, Typography } from 'antd';
+import { Collapse, Empty, Space, Typography } from 'antd';
 import { useMemo, useState } from 'react';
 import type { Message } from '@/api/types';
 import { detectVerificationCode, htmlToText } from '@/utils/verifyCode';
 import { MailBody } from './MailBody';
 import { MailHeader } from './MailItem';
+import { MailMeta } from './MailMeta';
 
 interface MailListProps {
   messages: Message[];
   downloadingId: string | null;
   onDownloadRaw: (messageId: string) => void;
+  /** 附件下载键: `${messageId}:${attachmentIndex}`, 用于逐附件的 loading 态 */
+  downloadingAttachmentKey: string | null;
+  onDownloadAttachment: (message: Message, index: number) => void;
 }
 
 /** 从主题与正文中识别验证码, 正文优先取纯文本, 缺省时从 HTML 粗解析 */
@@ -23,7 +27,13 @@ function detectFromMessage(message: Message) {
  * 邮件列表。
  * 按接收时间倒序排列, 最新一封默认展开并高亮; 点击行展开后才渲染正文。
  */
-export function MailList({ messages, downloadingId, onDownloadRaw }: MailListProps) {
+export function MailList({
+  messages,
+  downloadingId,
+  onDownloadRaw,
+  downloadingAttachmentKey,
+  onDownloadAttachment,
+}: MailListProps) {
   const sorted = useMemo(
     () => [...messages].sort((a, b) => (b.received_at ?? 0) - (a.received_at ?? 0)),
     [messages],
@@ -72,7 +82,16 @@ export function MailList({ messages, downloadingId, onDownloadRaw }: MailListPro
               onDownloadRaw={onDownloadRaw}
             />
           ),
-          children: <MailBody html={message.body_html ?? ''} text={message.body_text ?? ''} />,
+          children: (
+            <Space direction="vertical" size={8} style={{ width: '100%', minWidth: 0 }}>
+              <MailBody html={message.body_html ?? ''} text={message.body_text ?? ''} />
+              <MailMeta
+                message={message}
+                downloadingKey={downloadingAttachmentKey}
+                onDownloadAttachment={onDownloadAttachment}
+              />
+            </Space>
+          ),
         };
       })}
     />

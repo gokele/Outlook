@@ -31,3 +31,26 @@ export function downloadRawMail(accountId: string | number, messageId: string) {
 export function rawMailUrl(accountId: string | number, messageId: string) {
   return buildUrl('/admin/mail/raw', { account_id: accountId, message_id: messageId });
 }
+
+/**
+ * 下载单个附件。在线取回原始邮件后按名字或下标选取并解码, 邮件本身仍不落库。
+ * 名字优先: 三条通道对附件顺序的保证不一致, 文件名才是稳的。
+ */
+export function downloadAttachment(
+  accountId: string | number,
+  messageId: string,
+  att: { name?: string; index?: number },
+  channel?: string,
+) {
+  return downloadFile(
+    '/admin/mail/attachment',
+    {
+      account_id: accountId,
+      message_id: messageId,
+      ...(channel ? { channel } : {}),
+      ...(att.name ? { name: att.name } : {}),
+      ...(att.index !== undefined ? { index: att.index } : {}),
+    },
+    att.name || `attachment-${att.index ?? 0}`,
+  );
+}

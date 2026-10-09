@@ -126,6 +126,12 @@ func TestNormalizeEmail(t *testing.T) {
 		"  Alice@Outlook.COM ": "alice@outlook.com",
 		"ＢＯＢ@hotmail.com":      "bob@hotmail.com",
 		"c@d.com":              "c@d.com",
+		// +tag 别名段剥掉：投递上它们是同一个信箱。
+		"user+shop@hotmail.com": "user@hotmail.com",
+		"User+A@x.com":          "user@x.com",
+		"user+@x.com":           "user+@x.com", // + 后为空不剥
+		"+tag@x.com":            "+tag@x.com",  // + 前为空不剥，交给格式校验去拒
+		"a+b+c@x.com":           "a@x.com",     // 只剥第一个 + 之后的内容
 	}
 	for in, want := range cases {
 		if got := NormalizeEmail(in); got != want {

@@ -115,6 +115,37 @@ func TestImportThreeLayerDedup(t *testing.T) {
 	}
 }
 
+// TestImportAliasDedup 校验 +tag 别名在导入时归一成同一信箱：
+// user+a@ 与 user+b@ 撞批内去重，落库的是剥掉别名段的规范邮箱。
+func TestImportAliasDedup(t *testing.T) {
+	im, st := newTestImporter(t)
+	ctx := context.Background()
+
+	text := strings.Join([]string{
+		"user+shop@o.com----pw----" + guid + "----" + longToken("a"),
+		"user+bank@o.com----pw----" + guid + "----" + longToken("b"), // 别名不同，同一个信箱
+	}, "\n")
+	res, err := im.Run(ctx, Request{Text: text})
+	if err != nil {
+		t.Fatalf("导入失败: %v", err)
+	}
+	if res.Added != 1 || res.Skipped != 1 {
+		t.Fatalf("两个别名应撞批内去重，实际 added=%d skipped=%d", res.Added, res.Skipped)
+	}
+	acc, err := st.GetAccountByEmail(ctx, "user@o.com")
+	if err != nil {
+		t.Fatalf("落库的应是剥掉别名段的规范邮箱: %v", err)
+	}
+	if acc.Email != "user@o.com" {
+		t.Errorf("落库邮箱应为规范形态，实际 %q", acc.Email)
+	}
+	// 用别名再导一次应命中库内重复，而不是又占一个坑。
+	res2, _ := im.Run(ctx, Request{Text: "user+shop@o.com----pw----" + guid + "----" + longToken("c")})
+	if res2.Skipped != 1 || res2.Added != 0 {
+		t.Errorf("别名对库内去重也应生效，实际 added=%d skipped=%d", res2.Added, res2.Skipped)
+	}
+}
+
 // TestImportUpdateStrategy 校验覆盖策略会更新授权码并重置为未验证，
 // 这是导入续期后新授权码的标准路径。
 func TestImportUpdateStrategy(t *testing.T) {

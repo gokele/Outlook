@@ -263,6 +263,11 @@ func imapMessageFromLine(ln imapLine, folder model.Folder, withBody bool) (Messa
 		// 正文是截断的，逐段遍历看不到排在后面的附件段，
 		// 因此附件标记以服务端给出的 BODYSTRUCTURE 为准。
 		m.HasAttachments = imapBodyStructureHasAttachment(ln.Text)
+		// 附件清单同理必须压掉：截断点之后的附件看不见，报出来的
+		// 是一份缺了尾巴却看似完整的清单，比没有更误导。
+		// has_attachments 为真时调用方知道"有附件但详情未知"，
+		// 需要名字与内容就走 /mail/attachment 的原文路径。
+		m.Attachments = []Attachment{}
 	}
 	// UID 与 INTERNALDATE 排在 ENVELOPE 之前，先在这段前缀里找，避免匹配到主题里的同形文本。
 	head := ln.Text

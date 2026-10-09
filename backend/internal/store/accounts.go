@@ -546,8 +546,18 @@ func (s *Store) StatusCounts(ctx context.Context) (map[string]int, bool, error) 
 	return out, capped, nil
 }
 
-// NormalizeEmail 规范化邮箱：去首尾空白、全角转半角、统一小写。
-// 账号唯一性以规范化后的值为准。
+// NormalizeEmail 规范化邮箱：去首尾空白、全角转半角、统一小写，并剥掉
+// 本地部分的 +tag 别名段。账号唯一性以规范化后的值为准。
+//
+// Outlook 支持追加寻址（plus addressing）：user+shop@hotmail.com 投递到
+// user@hotmail.com。调用方用别名注册、用本名查账号（或反过来）都必须命中
+// 同一行，否则按邮箱找账号这条全系统最热的路径会平白多出一种 404。
+// 同理，导入 user+a@ 与 user+b@ 是同一个信箱，必须撞库内去重，
+// 否则一个信箱在池子里占两个坑。剥落在唯一入口做：查重、查询、导入
+// 都经过这里，别名在落库前就归一成规范形态。
+//
+// 只剥本地部分第一个 + 之后的内容，且要求 + 前后都非空 ——
+// 形如 +tag@x.com 的地址剥完本地部分为空，保留原样交给上层的格式校验去拒。
 func NormalizeEmail(s string) string {
 	s = strings.TrimSpace(s)
 	var b strings.Builder
@@ -560,7 +570,16 @@ func NormalizeEmail(s string) string {
 			b.WriteRune(r)
 		}
 	}
-	return strings.ToLower(strings.TrimSpace(b.String()))
+	s = strings.ToLower(strings.TrimSpace(b.String()))
+	at := strings.LastIndex(s, "@")
+	if at <= 0 || at == len(s)-1 {
+		return s
+	}
+	local, domain := s[:at], s[at:]
+	if i := strings.Index(local, "+"); i > 0 && i < len(local)-1 {
+		local = local[:i]
+	}
+	return local + domain
 }
 
 // ErrDuplicate 表示违反唯一约束，用于导入时区分重复与其他错误。

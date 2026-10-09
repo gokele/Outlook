@@ -2,7 +2,8 @@ import { ReloadOutlined } from '@ant-design/icons';
 import { Card, Segmented, Select, Space, Spin, Typography } from 'antd';
 import { Button } from 'antd';
 import { useState } from 'react';
-import { downloadRawMail } from '@/api/mail';
+import { downloadAttachment, downloadRawMail } from '@/api/mail';
+import type { Message } from '@/api/types';
 import { QueryStateView } from '@/components/common/QueryStateView';
 import { toast } from '@/lib/feedback';
 import type { FolderTab } from '../hooks/useMailQuery';
@@ -29,6 +30,7 @@ export function MailPanel({ accountId, disabled, disabledReason }: MailPanelProp
   const [tab, setTab] = useState<FolderTab>('all');
   const [limit, setLimit] = useState(20);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadingAttachmentKey, setDownloadingAttachmentKey] = useState<string | null>(null);
 
   const { data, isPending, isFetching, error, refetch } = useMailQuery(
     accountId,
@@ -48,6 +50,25 @@ export function MailPanel({ accountId, disabled, disabledReason }: MailPanelProp
       // downloadFile 内部已给出错误提示, 这里只结束 loading
     } finally {
       setDownloadingId(null);
+    }
+  };
+
+  /** 下载单个附件, 名字优先于下标 —— 通道间附件顺序的保证不一致 */
+  const handleDownloadAttachment = async (message: Message, index: number) => {
+    const att = message.attachments?.[index];
+    if (!att) return;
+    setDownloadingAttachmentKey(`${message.id}:${index}`);
+    try {
+      await downloadAttachment(
+        accountId,
+        message.id,
+        att.name ? { name: att.name, index } : { index },
+        message.channel,
+      );
+    } catch {
+      // 同上, 错误提示已在 downloadFile 里给出
+    } finally {
+      setDownloadingAttachmentKey(null);
     }
   };
 
@@ -110,6 +131,10 @@ export function MailPanel({ accountId, disabled, disabledReason }: MailPanelProp
                     messages={visibleMessages}
                     downloadingId={downloadingId}
                     onDownloadRaw={(messageId) => void handleDownloadRaw(messageId)}
+                    downloadingAttachmentKey={downloadingAttachmentKey}
+                    onDownloadAttachment={(message, index) =>
+                      void handleDownloadAttachment(message, index)
+                    }
                   />
                 </Spin>
               </Space>
