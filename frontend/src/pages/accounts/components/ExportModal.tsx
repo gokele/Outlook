@@ -120,7 +120,7 @@ export function ExportModal({
             name="include_secrets"
             label="包含敏感信息"
             valuePropName="checked"
-            extra="包含 client_id 与 refresh_token, 导出文件请妥善保管"
+            extra="包含密码、client_id、refresh_token 与辅助邮箱 (TXT 为与导入一致的完整格式), 导出文件请妥善保管"
             style={{ marginBottom: includeSecrets ? 12 : 0 }}
           >
             <Switch />

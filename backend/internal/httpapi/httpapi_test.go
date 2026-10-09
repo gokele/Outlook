@@ -16,6 +16,7 @@ import (
 	"github.com/gokele/Outlook/internal/config"
 	"github.com/gokele/Outlook/internal/crypto"
 	"github.com/gokele/Outlook/internal/fetcher"
+	"github.com/gokele/Outlook/internal/importer"
 	"github.com/gokele/Outlook/internal/model"
 	"github.com/gokele/Outlook/internal/oauth"
 	"github.com/gokele/Outlook/internal/orchestrator"
@@ -490,6 +491,161 @@ func TestExportSecretsAllowedWhenConfirmed(t *testing.T) {
 	if parts[1] != "" {
 		t.Errorf("密码段应为空，实际 %q", parts[1])
 	}
+}
+
+// TestExportTxtFullFormat 校验含令牌的 TXT 导出带出密码与辅助邮箱，
+// 与导入的六段格式一致，且导出的文本能通过真实导入器干净回导。
+func TestExportTxtFullFormat(t *testing.T) {
+	e := newEnv(t)
+	c := e.login(t)
+	token := strings.Repeat("T", 60)
+	_, err := e.st.InsertAccount(context.Background(), &model.Account{
+		Email: "full@o.com", PasswordEnc: mustEnc(t, e, "PassW0rd!"),
+		ClientID: "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
+		RefreshTokenEnc: mustEnc(t, e, token), RecoveryEmail: "rec@gmail.com",
+		RecoveryPasswordEnc: mustEnc(t, e, "RecPw123"),
+		Tenant:              "consumers", Status: model.StatusUnverified,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := e.doRaw(t,
+		"/api/admin/accounts/export?format=txt&include_secrets=true&confirm_password="+e.pass+"&status=UNVERIFIED", c)
+	if w.Code != 200 {
+		t.Fatalf("含令牌导出应放行，实际 %d：%s", w.Code, w.Body.String())
+	}
+	body := trimNewline(w.Body.String())
+	parts := splitAll(body, "----")
+	if len(parts) != 6 {
+		t.Fatalf("带辅助邮箱的账号应导出六段，实际 %d 段：%q", len(parts), body)
+	}
+	if parts[0] != "full@o.com" || parts[1] != "PassW0rd!" ||
+		parts[2] != "9e5f94bc-e8a4-4e73-b8be-63364c29d753" || parts[3] != token ||
+		parts[4] != "rec@gmail.com" || parts[5] != "RecPw123" {
+		t.Errorf("六段字段值不对：%v", parts)
+	}
+
+	// 回导 round-trip：导出的文本过一遍真实导入器（DryRun），
+	// 解析零失败即证明格式与导入约定一致。
+	res, err := importer.New(e.st, e.box).Run(context.Background(), importer.Request{Text: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Invalid > 0 || res.Warned > 0 {
+		t.Errorf("导出文本回导不应有解析失败，实际 invalid=%d warned=%d：%v",
+			res.Invalid, res.Warned, res.Rows)
+	}
+	if res.Total != 1 {
+		t.Errorf("回导应认出一行，实际 %d", res.Total)
+	}
+}
+
+// TestExportTxtNoRecoveryStaysFour 校验没有辅助邮箱的账号仍导出四段，
+// 以及授权码里含分隔符时宁可少导辅助邮箱也不损坏授权码。
+func TestExportTxtNoRecoveryStaysFour(t *testing.T) {
+	e := newEnv(t)
+	c := e.login(t)
+	// 没有辅助邮箱，只有密码。
+	_, err := e.st.InsertAccount(context.Background(), &model.Account{
+		Email: "plain@o.com", PasswordEnc: mustEnc(t, e, "PassW0rd!"),
+		ClientID: "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
+		RefreshTokenEnc: mustEnc(t, e, strings.Repeat("P", 60)),
+		Tenant:          "consumers", Status: model.StatusUnverified,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 有辅助邮箱，但授权码里含分隔符：追加两段会让回导把辅助邮箱并进授权码。
+	weirdTok := strings.Repeat("X", 30) + "----" + strings.Repeat("Y", 30)
+	_, err = e.st.InsertAccount(context.Background(), &model.Account{
+		Email: "weird@o.com", PasswordEnc: mustEnc(t, e, "PassW0rd!"),
+		ClientID: "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
+		RefreshTokenEnc: mustEnc(t, e, weirdTok), RecoveryEmail: "rec@gmail.com",
+		RecoveryPasswordEnc: mustEnc(t, e, "RecPw123"),
+		Tenant:              "consumers", Status: model.StatusUnverified,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := e.doRaw(t,
+		"/api/admin/accounts/export?format=txt&include_secrets=true&confirm_password="+e.pass+"&status=UNVERIFIED", c)
+	if w.Code != 200 {
+		t.Fatalf("含令牌导出应放行，实际 %d：%s", w.Code, w.Body.String())
+	}
+	lines := strings.Split(trimNewline(w.Body.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("应导出两行，实际 %d：%q", len(lines), w.Body.String())
+	}
+	byEmail := map[string][]string{}
+	for _, ln := range lines {
+		ps := splitAll(ln, "----")
+		byEmail[ps[0]] = ps
+	}
+	plain, weird := byEmail["plain@o.com"], byEmail["weird@o.com"]
+	if len(plain) != 4 {
+		t.Errorf("无辅助邮箱应保持四段，实际 %d 段：%v", len(plain), plain)
+	} else if plain[1] != "PassW0rd!" {
+		t.Errorf("密码段应带出，实际 %q", plain[1])
+	}
+	// splitAll 是全切分，授权码内嵌的分隔符会把行切成 5 段，段数不是判据；
+	// 判据是不再含辅助邮箱，且切开的授权码拼回后是原值。
+	if weirdLine := strings.Join(weird, "----"); strings.Contains(weirdLine, "rec@gmail.com") {
+		t.Errorf("授权码含分隔符时不应追加辅助邮箱：%s", weirdLine)
+	} else if got := strings.Join(weird[3:], "----"); got != weirdTok {
+		t.Errorf("授权码应原样保全，实际 %q", got)
+	}
+
+	// 两行都应能干净回导：授权码含分隔符的那行回导后仍是原值。
+	res, err := importer.New(e.st, e.box).Run(context.Background(),
+		importer.Request{Text: w.Body.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Invalid > 0 || res.Warned > 0 {
+		t.Errorf("导出文本回导不应有解析失败，实际 invalid=%d warned=%d：%v",
+			res.Invalid, res.Warned, res.Rows)
+	}
+	if res.Total != 2 {
+		t.Errorf("回导应认出两行，实际 %d", res.Total)
+	}
+}
+
+// TestExportSecretsExcludedByDefault 校验不含令牌的导出不泄露密码与辅助邮箱。
+func TestExportSecretsExcludedByDefault(t *testing.T) {
+	e := newEnv(t)
+	c := e.login(t)
+	_, err := e.st.InsertAccount(context.Background(), &model.Account{
+		Email: "e5@o.com", PasswordEnc: mustEnc(t, e, "PassW0rd!"),
+		ClientID: "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
+		RefreshTokenEnc: mustEnc(t, e, "SECRETTOKENVALUE"), RecoveryEmail: "rec@gmail.com",
+		RecoveryPasswordEnc: mustEnc(t, e, "RecPw123"),
+		Tenant:              "consumers", Status: model.StatusUnverified,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := e.doRaw(t, "/api/admin/accounts/export?format=txt&status=UNVERIFIED", c)
+	if w.Code != 200 {
+		t.Fatalf("导出应返回 200，实际 %d", w.Code)
+	}
+	for _, leak := range []string{"PassW0rd!", "RecPw123", "rec@gmail.com", "SECRETTOKENVALUE"} {
+		if strings.Contains(w.Body.String(), leak) {
+			t.Errorf("不含令牌的导出泄露了 %q", leak)
+		}
+	}
+}
+
+// mustEnc 加密一个明文供测试使用。
+func mustEnc(t *testing.T, e *testEnv, plain string) []byte {
+	t.Helper()
+	enc, err := e.box.Encrypt(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return enc
 }
 
 // trimNewline 去掉末尾换行。

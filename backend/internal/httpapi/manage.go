@@ -153,21 +153,37 @@ func (s *Server) handleExportAccounts(w http.ResponseWriter, r *http.Request) {
 			}
 			if includeSecrets {
 				m["refresh_token"], _ = s.box.Decrypt(a.RefreshTokenEnc)
+				m["password"], _ = s.box.Decrypt(a.PasswordEnc)
+				m["recovery_email"] = a.RecoveryEmail
+				m["recovery_password"], _ = s.box.Decrypt(a.RecoveryPasswordEnc)
 			}
 			out = append(out, m)
 		}
 		_ = json.NewEncoder(w).Encode(out)
 
 	case "txt":
-		// TXT 与导入格式一致，可直接回导。
+		// TXT 与导入格式一致，可直接回导。含令牌时输出与导入相同的完整六段：
+		// 邮箱----密码----clientid----授权码----辅助邮箱----辅助邮箱密码。
+		// 密码与辅助邮箱只随 include_secrets 出：它们与令牌同级敏感，
+		// 辅助邮箱更是连账号列表都不下发的社工线索。
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`.txt"`)
 		for _, a := range items {
-			tok := ""
+			pw, tok, recEmail, recPw := "", "", "", ""
 			if includeSecrets {
 				tok, _ = s.box.Decrypt(a.RefreshTokenEnc)
+				pw, _ = s.box.Decrypt(a.PasswordEnc)
+				recPw, _ = s.box.Decrypt(a.RecoveryPasswordEnc)
+				recEmail = a.RecoveryEmail
 			}
-			fmt.Fprintf(w, "%s%s%s%s%s%s%s\n", a.Email, sep, "", sep, a.ClientID, sep, tok)
+			line := a.Email + sep + pw + sep + a.ClientID + sep + tok
+			// 辅助邮箱两段只在确有辅助邮箱且授权码不含分隔符时追加。
+			// 导入侧认六段的判据是"第五段为合法邮箱"，授权码里恰好含分隔符时
+			// 这两段会被并回授权码，回导即损坏 —— 宁可少导两段，不损坏授权码。
+			if recEmail != "" && !strings.Contains(tok, sep) {
+				line += sep + recEmail + sep + recPw
+			}
+			fmt.Fprintln(w, line)
 		}
 
 	default:

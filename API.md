@@ -228,7 +228,7 @@ HTML 会先去掉标签再匹配，`script` 与 `style` 整块丢弃，避免撞
 | `POST /api/v1/mail/export`（亦可 `GET`） | 在线取件后流式输出。`format=csv\|json`，`limit` 默认 50 上限 200 |
 | `POST /api/v1/mail/lease/{account_id}/release`（亦可 `DELETE /api/v1/mail/lease/{account_id}`） | 提前释放本 Key 持有的租约 |
 | `POST /api/v1/accounts/list`（亦可 `GET /api/v1/accounts`） | 账号列表，受 Key 的分类范围约束 |
-| `POST /api/v1/accounts/export`（亦可 `GET`） | `format=txt\|csv\|json`。含令牌需 `include_secrets=true` 且 Key 开启 `allow_export_secrets`，同时必须限定范围：`ids=1,2,3` 或任一筛选条件。文件名形如 `outlook-accounts-SECRETS-sel-3-20260909-123045.txt`，依次是含令牌标记、范围、条数与时间 |
+| `POST /api/v1/accounts/export`（亦可 `GET`） | `format=txt\|csv\|json`。含令牌需 `include_secrets=true` 且 Key 开启 `allow_export_secrets`，同时必须限定范围：`ids=1,2,3` 或任一筛选条件。文件名形如 `outlook-accounts-SECRETS-sel-3-20260909-123045.txt`，依次是含令牌标记、范围、条数与时间。TXT 与导入格式一致可直接回导，含令牌时为完整六段（带出库内存有的密码与辅助邮箱），无辅助邮箱或授权码本身含分隔符的行保持四段 |
 | `POST /api/v1/accounts/import` | 批量导入，body 见下 |
 | `POST /api/v1/accounts/{id}/verify` | 强制轮换一次，确认授权码有效并重置 90 天 |
 | `POST /api/v1/accounts/{id}/update`（亦可 `PATCH /api/v1/accounts/{id}`） | 改分类、标签、备注等 |
