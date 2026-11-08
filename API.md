@@ -345,7 +345,7 @@ curl -X POST -H "Authorization: Bearer kl_xxx" -H 'Content-Type: application/jso
 |---|---|
 | `POST /api/admin/login` | `{username, password}`，成功后下发会话 Cookie。**有限速**：连续失败超过 4 次后按指数退避封禁（单 IP 最长 15 分钟，单用户名最长 60 秒），返回 429 `TOO_MANY_ATTEMPTS` 并带 `Retry-After`。封禁期内即使密码正确也会被挡——限速在校验之前生效 |
 | `POST /api/admin/logout` / `GET /api/admin/me` | 注销与取当前用户 |
-| `GET /api/admin/overview` | 总览。含 `total`、`total_exact`、`by_status`、`by_status_capped`、`by_category`、`fetch_7d`、`code_7d`、`token_tiers`、`scheduler`（健康度与容量自检）、`suspended_clients`。<br>**计数是封顶的**：`total_exact` 为 `false` 表示 `total` 是数据库的行数估计（账号超过 10 万后如此，误差几个百分点）；`by_status_capped` 为 `true` 表示分状态计数在 10 万处截断，各项都是「至少这么多」。原因是 `COUNT(*)` 的代价与表规模成正比，十亿行要二十多分钟。<br>`scheduler` 里的容量分两组：轮换的 `steady_rate_per_day` / `max_rate_per_day`，与首验的 `unverified` / `first_verify_per_day` / `first_verify_days`——两者性质不同，轮换需求按账号数除以阈值天数摊开，首验是导入那一刻全部堆进队列的。<br>另含速率自适应的结果：`auto_rate` 说明速率是推导的还是手填的，`per_ip_per_min` / `per_client_per_min` 是本次生效值，`need_ips` / `need_clients` 是按安全上限反推的资源需求量，与 `have_ips` / `have_clients` 的差额就是还缺多少。`capped` 为真表示队列计数也撞到了封顶 |
+| `GET /api/admin/overview` | 总览。含 `total`、`total_exact`、`by_status`、`by_status_capped`、`by_category`、`fetch_7d`、`code_7d`、`token_tiers`、`scheduler` 与 `suspended_clients`。`total_exact=false` 表示总数来自数据库估计，`by_status_capped=true` 表示分状态计数在 10 万处截断。`scheduler` 返回实际队列与执行状态，字段与调度行为见下节 |
 | `GET /api/admin/accounts` | 列表。`q`、`category_id`、`status`、`channel`、`tag`、`domain`、`page`、`size`。`domain` 按邮箱后缀精确匹配，如 `outlook.com`；`q` 传完整邮箱时走等值查询，传片段时走模糊匹配。<br>**`total` 封顶在 100000**，等于这个值时表示「至少这么多」，页码也随之封顶——分页只需要知道还有没有下一页，而数准总数在大表上是一次全表扫描 |
 | `GET /api/admin/accounts/{id}` | 单账号，详情页深链用 |
 | `PATCH /api/admin/accounts/{id}` | `{category_id?, clear_category?, note?, channel_policy?, disabled?, tags?, refresh_token?, client_id?}`。给了 `refresh_token` 会整组覆盖凭据并把账号重置为未验证，同时清掉通道能力、失败计数与 90 天倒计时——它们都是针对上一把授权码的。只给 `client_id` 不给授权码会被拒绝：授权码是绑定 client_id 签发的 |
@@ -390,6 +390,27 @@ curl -X POST -H "Authorization: Bearer kl_xxx" -H 'Content-Type: application/jso
 | `POST /api/admin/me/username` | `{username, current_password}` 改登录名。3 到 32 位，只收字母数字与 `. _ -`。重名返回 409 `USERNAME_EXISTS`，密码错返回 400 `WRONG_PASSWORD`。改名不影响任何会话 |
 | `GET /api/admin/update` | 当前版本与 GitHub 上的最新发布。返回 `{current, repo, supported, latest, available, reason?, error?}`，`latest` 含 `version`、`name`、`notes`、`url`、`published_at`、`asset_name`、`asset_size` |
 | `POST /api/admin/update/apply` | `{confirm_password}` 下载、校验并替换二进制，随后自动重启。返回 `{ok, installed, backup, restarting, message}`。开发版或未配 `UPDATE_REPO` 时返回 400 `UPDATE_DISABLED`，已是最新返回 400 `ALREADY_LATEST`。**替换前会先把新二进制跑一次 `-version`**，跑不起来或版本对不上就整个放弃，现役文件不受影响 |
+
+### 调度器状态与设置
+
+调度器启动后立即补跑，之后每分钟扫描。已到 `next_rotate_at` 的账号全部进入本轮，按 P0（距硬到期不足 7 天）、P1（不足 15 天）、常规轮换、首验的顺序处理。一次只读 256 个账号，处理完继续下一批，不限制整轮总量。验证始终带 `offline_access`，取得新的 refresh_token 后写回有效期与下一次轮换时间；失败账号退避，禁用、失效、封禁和应用熔断中的账号跳过。
+
+`GET /api/admin/overview` 的 `scheduler` 与 `GET/PUT /api/admin/settings` 的 `health` 使用相同结构：
+
+| 字段 | 含义 |
+|---|---|
+| `enabled` / `running` | 调度器是否启用、当前是否正在处理一轮任务 |
+| `concurrency` | 全局并发数量，默认 32 |
+| `backlog` / `p0` / `p1` | 已到轮换时间的积压、距硬到期不足 7 天与 15 天的账号数；P1 包含 P0 |
+| `unverified` / `need_manual` | 未验证账号数、连续失败至少 5 次的账号数 |
+| `capped` | 任一队列计数达到 100000 上限；达到上限的值表示下限 |
+| `last_run_at` / `last_run_count` | 最近一轮开始的 Unix 秒、本轮已成功续期数；运行时按批更新 |
+| `rotate_after_days` / `first_expiry_at` | 轮换阈值天数；关闭时最早的硬到期时间，未知为 0 |
+| `healthy` / `advice` | 是否启用且没有 P0 或连续失败告警，以及当前建议 |
+
+设置页仅保留 `scheduler_enabled` 与 `concurrency` 两项调度配置。无固定单 IP、单应用或首验每分钟配额；全局并发控制资源占用，微软实际返回的限流继续遵守 `Retry-After`。
+
+旧设置 `auto_rate`、`per_ip_per_min`、`per_client_per_min`、`p3_per_min`、`egress_ips`、`per_proxy_concurrency` 不再返回，保存请求中提供这些键会被忽略，数据库里已有的值也不生效。健康度移除 `steady_rate_per_day`、`max_rate_per_day`、`first_verify_per_day`、`first_verify_days`、`auto_rate`、`per_ip_per_min`、`per_client_per_min`、`need_ips`、`need_clients`、`have_ips`、`have_clients`，改为上述真实状态字段。
 
 ### 导入
 

@@ -102,11 +102,3 @@ func (s *Store) ListClientApps(ctx context.Context) ([]model.ClientApp, error) {
 	}
 	return out, rows.Err()
 }
-
-// CountDistinctClientIDs 返回不同 client_id 的数量，用于调度器的容量自检。
-func (s *Store) CountDistinctClientIDs(ctx context.Context) (int, error) {
-	var n int
-	err := s.queryRow(ctx,
-		`SELECT COUNT(DISTINCT client_id) FROM accounts WHERE disabled = 0 AND status <> 'INVALID'`).Scan(&n)
-	return n, err
-}

@@ -459,7 +459,7 @@ func (s *Store) SetLastError(ctx context.Context, id int64, msg string) error {
 	return err
 }
 
-// CountAccounts 返回未禁用且未失效的账号总数，供调度器计算稳态速率。
+// CountAccounts 返回未禁用且未失效的账号总数，供小规模总览展示。
 //
 // 这是一次真实的 COUNT(*)，代价与表规模成正比。上了规模就该用
 // CountAccountsApprox —— 这个函数留给确实需要准确值、且已知表不大的地方。
@@ -480,12 +480,8 @@ const exactCountMax = 100000
 // 先用统计信息估一个数：小表就老老实实数一遍，大表用 PostgreSQL 自己维护的
 // 行数估计（autovacuum 持续更新，误差通常在百分之几）。
 //
-// 之所以敢用估计值：它的唯一用途是推导速率，而速率还要被安全上限截断，
-// 差百分之几改变不了任何决策。反过来，为了这几位精度在十亿行上跑一次
-// COUNT(*) 要二十多分钟，那才是真正的问题。
-//
-// 估计值统计的是全表行数，含已禁用与已失效的账号，因此偏大。偏大的方向是
-// 速率算得更靠近上限一些，也就是回到自适应之前的行为，不会突破安全线。
+// 估计值统计的是全表行数，含已禁用与已失效的账号，因此可能偏大。
+// 调用方通过 total_exact 展示精度；调度器不依赖总数决定本轮处理量。
 func (s *Store) CountAccountsApprox(ctx context.Context) (int64, bool) {
 	if est, ok := s.estimateAccountRows(ctx); ok && est > exactCountMax {
 		return est, false

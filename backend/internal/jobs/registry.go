@@ -22,9 +22,7 @@ var ErrBusy = errors.New("已有同类任务正在执行")
 const (
 	// MaxConcurrency 是允许的最大并发。
 	//
-	// 上限不是随手定的：所有请求最终都打到微软，并发越高越像脚本行为。
-	// 调度器的速率上限是按"单 IP、单 client_id、全局"三者取最小算出来的，
-	// 手动任务没有那套推导，因此给一个保守的硬顶，让人调也调不出格。
+	// 手动批量任务与常驻调度器可同时执行，这个上限限制额外的资源占用。
 	MaxConcurrency = 16
 	// DefaultConcurrency 是不指定时的并发。
 	DefaultConcurrency = 5

@@ -567,6 +567,15 @@ func (s *Server) handleDeleteLogs(w http.ResponseWriter, r *http.Request) {
 // defaultLeaseSeconds 是调用方没指定时长时的租约时长。
 const defaultLeaseSeconds = 300
 
+// legacySchedulerSetting 识别已取消的配额设置，升级后不再展示或应用旧值。
+func legacySchedulerSetting(key string) bool {
+	switch key {
+	case "auto_rate", "per_ip_per_min", "per_client_per_min", "p3_per_min", "egress_ips", "per_proxy_concurrency":
+		return true
+	}
+	return false
+}
+
 // settingsDefaults 返回出厂默认值，供界面上的「恢复默认值」使用。
 //
 // 与 handleGetSettings 里那个 defaults 不是一回事：那个是**当前生效值**
@@ -585,13 +594,7 @@ func (s *Server) settingsDefaults() map[string]any {
 		"channel_timeout_secs":  int(oc.ChannelTimeout / time.Second),
 		"fetch_limit":           oc.DefaultLimit,
 		"scheduler_enabled":     sc.Enabled,
-		"auto_rate":             sc.AutoRate,
-		"per_ip_per_min":        sc.PerIPPerMin,
-		"per_client_per_min":    sc.PerClientPerMin,
 		"concurrency":           sc.Concurrency,
-		"p3_per_min":            sc.P3PerMin,
-		"egress_ips":            sc.EgressIPs,
-		"per_proxy_concurrency": sc.PerProxyConcurrency,
 		"lease_default_seconds": defaultLeaseSeconds,
 		"tenant":                s.cfg.Tenant,
 	}
@@ -612,18 +615,14 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"channel_timeout_secs":  int(oc.ChannelTimeout / time.Second),
 		"fetch_limit":           oc.DefaultLimit,
 		"scheduler_enabled":     sc.Enabled,
-		"auto_rate":             sc.AutoRate,
-		"per_ip_per_min":        sc.PerIPPerMin,
-		"per_client_per_min":    sc.PerClientPerMin,
 		"concurrency":           sc.Concurrency,
-		"p3_per_min":            sc.P3PerMin,
-		"egress_ips":            sc.EgressIPs,
-		"per_proxy_concurrency": sc.PerProxyConcurrency,
 		"lease_default_seconds": defaultLeaseSeconds,
 		"tenant":                s.cfg.Tenant,
 	}
 	for k, v := range saved {
-		defaults[k] = v
+		if !legacySchedulerSetting(k) {
+			defaults[k] = v
+		}
 	}
 	health, _ := s.sched.CheckHealth(r.Context())
 	// defaults 一并下发，界面才能算出「恢复默认值」到底会改哪几项。
@@ -648,6 +647,9 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for k, v := range req.Settings {
+		if legacySchedulerSetting(k) {
+			continue
+		}
 		if err := s.st.PutSetting(r.Context(), k, v); err != nil {
 			writeError(w, r, err, s.log)
 			return
@@ -692,26 +694,8 @@ func (s *Server) ApplySettings(m map[string]any) {
 	if v, ok := m["scheduler_enabled"].(bool); ok {
 		sc.Enabled = v
 	}
-	if v, ok := m["auto_rate"].(bool); ok {
-		sc.AutoRate = v
-	}
-	if n, ok := num("per_ip_per_min"); ok && n > 0 {
-		sc.PerIPPerMin = n
-	}
-	if n, ok := num("per_client_per_min"); ok && n > 0 {
-		sc.PerClientPerMin = n
-	}
 	if n, ok := num("concurrency"); ok && n > 0 {
 		sc.Concurrency = n
-	}
-	if n, ok := num("p3_per_min"); ok && n > 0 {
-		sc.P3PerMin = n
-	}
-	if n, ok := num("per_proxy_concurrency"); ok && n > 0 {
-		sc.PerProxyConcurrency = n
-	}
-	if n, ok := num("egress_ips"); ok && n > 0 {
-		sc.EgressIPs = n
 	}
 	s.sched.SetConfig(sc)
 }

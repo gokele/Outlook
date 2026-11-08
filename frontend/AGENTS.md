@@ -79,8 +79,8 @@ options 支持 `title` / `target` / `description` / `consequences` / `confirmTex
 ## 安全约定
 
 - 认证只用 Cookie, 不使用 localStorage 存登录态
-- 邮件 HTML 正文在 `sandbox="allow-same-origin"` 的 iframe 中渲染 (不给 `allow-scripts`),
-  并叠加 CSP 与 `no-referrer`; 远程图片默认阻断, 需用户显式开启
+- 邮件 HTML 正文在 `sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"` 的 iframe 中渲染 (不给 `allow-scripts`),
+  并叠加 CSP 与 `no-referrer`; 链接统一新标签页打开并加 `noopener noreferrer`, 远程图片默认阻断, 需用户显式开启
 - 登录页 `redirect` 参数只接受站内相对路径, 防开放重定向
 
 ## 接口契约要点 (已与后端核对)

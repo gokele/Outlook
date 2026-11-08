@@ -115,30 +115,23 @@ export interface Tag {
 
 /** 调度器健康度: P0/P1 为待轮换优先级队列长度, backlog 为积压量 */
 export interface SchedulerHealth {
+  enabled: boolean;
+  running: boolean;
+  concurrency: number;
   p0: number;
   p1: number;
   backlog: number;
   /** 从未验证过的账号数, 即首验队列长度 */
   unverified: number;
-  steady_rate_per_day: number;
-  max_rate_per_day: number;
-  /** 首验队列每天能处理多少个 */
-  first_verify_per_day: number;
-  /** 按当前速率把未验证账号全部验完还需要多少天 */
-  first_verify_days: number;
+  need_manual: number;
+  capped: boolean;
+  last_run_at: number;
+  last_run_count: number;
+  rotate_after_days: number;
+  first_expiry_at: number;
   healthy: boolean;
   /** 不健康时的针对性建议 */
   advice: string;
-  /** 速率是自动推导的还是手填的 */
-  auto_rate: boolean;
-  /** 本次生效的速率上限, 自适应时为推导值 */
-  per_ip_per_min: number;
-  per_client_per_min: number;
-  /** 按安全上限反推出的资源需求量, 与 have_* 的差额就是要补的数量 */
-  need_ips: number;
-  need_clients: number;
-  have_ips: number;
-  have_clients: number;
 }
 
 /** 被熔断的 client_id 及其恢复时间 */

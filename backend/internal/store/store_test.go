@@ -173,7 +173,7 @@ func TestClaimRotateTasksPriority(t *testing.T) {
 	// 未到期，不应被取出。
 	mkAccount(t, st, "future@o.com", now.AddDate(0, 0, -1).Unix(), now.Add(time.Hour).Unix())
 
-	tasks, err := st.ClaimRotateTasks(ctx, 10, nil, true)
+	tasks, err := st.ClaimRotateTasks(ctx, 10, nil, now)
 	if err != nil {
 		t.Fatalf("取任务失败: %v", err)
 	}
@@ -195,27 +195,27 @@ func TestClaimRotateTasksExcludeSuspended(t *testing.T) {
 	id := mkAccount(t, st, "a@o.com", 0, time.Now().Add(-time.Hour).Unix())
 	acc, _ := st.GetAccount(ctx, id)
 
-	tasks, _ := st.ClaimRotateTasks(ctx, 10, []string{acc.ClientID}, true)
+	tasks, _ := st.ClaimRotateTasks(ctx, 10, []string{acc.ClientID}, time.Now())
 	if len(tasks) != 0 {
 		t.Fatalf("熔断中的 client_id 应被排除，实际取出 %d 条", len(tasks))
 	}
-	tasks, _ = st.ClaimRotateTasks(ctx, 10, nil, true)
+	tasks, _ = st.ClaimRotateTasks(ctx, 10, nil, time.Now())
 	if len(tasks) != 1 {
 		t.Fatalf("未熔断时应取出 1 条，实际 %d", len(tasks))
 	}
 }
 
-// TestClaimRotateTasksExcludeP3 校验首验队列可以被单独关闭。
-func TestClaimRotateTasksExcludeP3(t *testing.T) {
+// TestClaimRotateTasksHonorsRoundCutoff 校验本轮开始后才到期的账号留到下一轮。
+func TestClaimRotateTasksHonorsRoundCutoff(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	past := time.Now().Add(-time.Hour).Unix()
-	mkAccount(t, st, "p3@o.com", 0, past)
+	mkAccount(t, st, "p3@o.com", 0, time.Now().Add(-time.Minute).Unix())
 	mkAccount(t, st, "p2@o.com", time.Now().AddDate(0, 0, -60).Unix(), past)
 
-	tasks, _ := st.ClaimRotateTasks(ctx, 10, nil, false)
+	tasks, _ := st.ClaimRotateTasks(ctx, 10, nil, time.Now().Add(-30*time.Minute))
 	if len(tasks) != 1 || tasks[0].Email != "p2@o.com" {
-		t.Fatalf("关闭首验队列时只应取出 P2，实际 %+v", tasks)
+		t.Fatalf("截止时间之前只有 P2 到期，实际 %+v", tasks)
 	}
 }
 

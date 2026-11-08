@@ -13,7 +13,7 @@ const MAX_HEIGHT = 900;
 
 /**
  * 构造 iframe 的 srcDoc。
- * 安全约束: iframe 只给 allow-same-origin (不给 allow-scripts, 脚本无法执行),
+ * 安全约束: iframe 不给 allow-scripts；只允许用户点击链接打开新标签页，
  * 再叠加一层 CSP 收紧资源加载, 默认禁止远程图片以避免邮件里的追踪像素回连。
  */
 function buildSrcDoc(html: string, allowRemoteImages: boolean): string {
@@ -60,6 +60,15 @@ export function MailBody({ html, text }: MailBodyProps) {
   const handleLoad = () => {
     const doc = frameRef.current?.contentDocument;
     if (!doc?.body) return;
+    // 覆盖邮件自带的 _self / _top，外部页面也不能取得后台窗口的引用。
+    for (const link of doc.querySelectorAll<HTMLAnchorElement | HTMLAreaElement>('a[href],area[href]')) {
+      if (!['http:', 'https:', 'mailto:', 'tel:'].includes(link.protocol)) {
+        link.removeAttribute('href');
+        continue;
+      }
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+    }
     const next = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, doc.body.scrollHeight + 24));
     setHeight(next);
   };
@@ -108,7 +117,7 @@ export function MailBody({ html, text }: MailBodyProps) {
         <iframe
           ref={frameRef}
           title="邮件正文"
-          sandbox="allow-same-origin"
+          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
           referrerPolicy="no-referrer"
           srcDoc={srcDoc}
           onLoad={handleLoad}
@@ -133,7 +142,13 @@ export function MailBody({ html, text }: MailBodyProps) {
             borderRadius: 6,
           }}
         >
-          {text || '(无纯文本正文)'}
+          {(text || '(无纯文本正文)').split(/(https?:\/\/[^\s<>"']+)/gi).map((part, index) =>
+            /^https?:\/\//i.test(part) ? (
+              <Typography.Link key={index} href={part} target="_blank" rel="noopener noreferrer">
+                {part}
+              </Typography.Link>
+            ) : part,
+          )}
         </Typography.Paragraph>
       )}
     </Space>

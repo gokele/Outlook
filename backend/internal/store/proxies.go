@@ -224,14 +224,6 @@ func (s *Store) SetProxyHealth(ctx context.Context, id int64, healthy bool, errM
 	return err
 }
 
-// CountHealthyProxies 返回可用出口数，用于推导调度速率上限。
-func (s *Store) CountHealthyProxies(ctx context.Context) (int, error) {
-	var n int
-	err := s.queryRow(ctx,
-		`SELECT COUNT(*) FROM proxies WHERE enabled = 1 AND healthy = 1`).Scan(&n)
-	return n, err
-}
-
 // maxProxyInt 取较大值。store 包内没有现成的 helper, 单独放一个避免与别处重名。
 func maxProxyInt(a, b int) int {
 	if a > b {

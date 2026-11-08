@@ -88,7 +88,7 @@ func TestClaimRotateTasksFillsUrgentFirst(t *testing.T) {
 	mkAccount(t, st, "p0@o.com", now.AddDate(0, 0, -87).Unix(), past)
 	mkAccount(t, st, "p1@o.com", now.AddDate(0, 0, -80).Unix(), past)
 
-	tasks, err := st.ClaimRotateTasks(ctx, 2, nil, true)
+	tasks, err := st.ClaimRotateTasks(ctx, 2, nil, now)
 	if err != nil {
 		t.Fatalf("取任务失败: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestClaimRotateTasksOrdersWithinTier(t *testing.T) {
 	mkAccount(t, st, "later@o.com", now.AddDate(0, 0, -85).Unix(), past)
 	mkAccount(t, st, "sooner@o.com", now.AddDate(0, 0, -89).Unix(), past)
 
-	tasks, err := st.ClaimRotateTasks(ctx, 10, nil, false)
+	tasks, err := st.ClaimRotateTasks(ctx, 10, nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestClaimRotateTasksOrdersWithinTier(t *testing.T) {
 	if tasks[0].Email != "sooner@o.com" {
 		t.Fatalf("同档内应先做最先到期的，实际先做 %s", tasks[0].Email)
 	}
-	// 取任务时要一并带出出口绑定，调度层才能按出口分摊速率。
+	// 轮换所需的凭据仍须完整读取。
 	for _, task := range tasks {
 		if task.ClientID == "" || len(task.RefreshTokenEnc) == 0 {
 			t.Errorf("%s 的凭据字段没读全: %+v", task.Email, task)

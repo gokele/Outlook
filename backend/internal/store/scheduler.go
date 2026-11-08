@@ -16,17 +16,12 @@ type RotateTask struct {
 	RefreshTokenEnc []byte
 	Priority        int   // 0 危急 1 紧急 2 正常 3 首验
 	TokenExpiresAt  int64 // 0 表示从未轮换
-	// ProxyID 是该账号已绑定的出口，0 表示尚未分配。
-	// 在取任务时一并带出，调度层才能按出口分摊速率与并发 ——
-	// 事后再逐个查库既慢，也来不及在派发前做打散。
-	ProxyID int64
 }
 
 // rotateTaskCols 是取任务时要读的列。prio 由调用方按档次填常量，不在 SQL 里算。
-const rotateTaskCols = `id, email, client_id, tenant, refresh_token_enc, token_expires_at,
- COALESCE(proxy_fallback_id, proxy_id, 0)`
+const rotateTaskCols = `id, email, client_id, tenant, refresh_token_enc, token_expires_at`
 
-// ClaimRotateTasks 取出已到期的待轮换账号，按紧迫度排序。
+// ClaimRotateTasks 取出截止 dueBefore 已到期的账号，按紧迫度排序。
 //
 // 优先级：P0 距硬到期不足 7 天，P1 不足 15 天，P2 正常，P3 从未轮换。
 // 时间阈值在 Go 侧算好后传参，SQL 里不做日期运算，因此同一条查询在两种数据库上一致。
@@ -35,16 +30,15 @@ const rotateTaskCols = `id, email, client_id, tenant, refresh_token_enc, token_e
 //
 // **四个档次分四条查询取，而不是一条查询加 CASE 算优先级。**
 // 原来那种写法要先给每一条到期记录算出 prio，再对全部结果排序，最后只要前 N 条。
-// 十万账号时排的是几千行，看不出问题；十亿账号每天到期一千六百万行，
-// 就是为了拿 30 条任务而对一千六百万行做一次排序 —— 每分钟一次。
+// 十万账号时排的是几千行，看不出问题；大表上为取一批任务排序全部到期账号，
+// 会让连续补跑卡在查询上。
 //
 // 拆开之后每一档都是"沿着某个索引扫，够 N 条就停"，代价与 limit 成正比，
 // 与表有多大无关。档次之间天然有序，拼起来就是原来的排序结果。
-func (s *Store) ClaimRotateTasks(ctx context.Context, limit int, suspended []string, includeP3 bool) ([]RotateTask, error) {
-	now := time.Now()
-	nowUnix := now.Unix()
-	p0 := now.Add(7 * 24 * time.Hour).Unix()
-	p1 := now.Add(15 * 24 * time.Hour).Unix()
+func (s *Store) ClaimRotateTasks(ctx context.Context, limit int, suspended []string, dueBefore time.Time) ([]RotateTask, error) {
+	nowUnix := dueBefore.Unix()
+	p0 := dueBefore.Add(7 * 24 * time.Hour).Unix()
+	p1 := dueBefore.Add(15 * 24 * time.Hour).Unix()
 
 	// 每一档的条件与排序键。排序键都选成能直接吃上索引的那一列：
 	// 前两档按硬到期时间（idx_accounts_expiry），P2 按下次轮换时间
@@ -67,15 +61,12 @@ func (s *Store) ClaimRotateTasks(ctx context.Context, limit int, suspended []str
 
 	var out []RotateTask
 	for _, tier := range tiers {
-		if tier.prio == 3 && !includeP3 {
-			continue
-		}
 		left := limit - len(out)
 		if left <= 0 {
 			break
 		}
 		q := `SELECT ` + rotateTaskCols + ` FROM accounts
-		      WHERE disabled = 0 AND status <> 'INVALID'
+		      WHERE disabled = 0 AND status <> 'INVALID' AND status <> 'BANNED'
 		        AND next_rotate_at <= ?
 		        AND ` + tier.cond
 		args := append([]any{nowUnix}, tier.args...)
@@ -95,7 +86,7 @@ func (s *Store) ClaimRotateTasks(ctx context.Context, limit int, suspended []str
 		for rows.Next() {
 			t := RotateTask{Priority: tier.prio}
 			if err := rows.Scan(&t.AccountID, &t.Email, &t.ClientID, &t.Tenant,
-				&t.RefreshTokenEnc, &t.TokenExpiresAt, &t.ProxyID); err != nil {
+				&t.RefreshTokenEnc, &t.TokenExpiresAt); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -130,8 +121,7 @@ type QueueStats struct {
 //
 // 数到十万就停，是因为**再精确也没有用**：
 //
-//   - 积压驱动的是每分钟配额（积压 ÷ 60），而配额还要被速率上限截断，
-//     积压超过上限的六十倍之后，多一个少一个不改变任何决策。
+//   - 调度器连续处理到期任务，不依赖积压的精确总数分配配额。
 //   - P0 只要判"是不是大于 0"就够触发告警了。
 //   - 页面上"积压 10 万+"和"积压 3 亿"给人的行动是同一个。
 //
@@ -164,7 +154,7 @@ func (s *Store) countUpToFrom(ctx context.Context, limit int, from, where string
 	return n, n >= limit, nil
 }
 
-// SchedulerStats 统计队列健康度，供总览页与容量自检使用。
+// SchedulerStats 统计实际队列健康度，供总览页展示。
 //
 // 每一项的 WHERE 都必须与 accountIndexes 里对应的部分索引谓词字面一致，
 // 否则规划器用不上那个索引，这里就又变回全表扫描 —— 而且不会报错，
@@ -172,7 +162,7 @@ func (s *Store) countUpToFrom(ctx context.Context, limit int, from, where string
 func (s *Store) SchedulerStats(ctx context.Context) (QueueStats, error) {
 	now := time.Now()
 	var st QueueStats
-	const base = `disabled = 0 AND status <> 'INVALID' AND `
+	const base = `disabled = 0 AND status <> 'INVALID' AND status <> 'BANNED' AND `
 
 	count := func(dst *int, where string, args ...any) error {
 		n, capped, err := s.countUpTo(ctx, queueCountCap, base+where, args...)

@@ -1,6 +1,9 @@
 package httpapi
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // 「恢复默认值」要能真的恢复。
 //
@@ -14,7 +17,7 @@ func TestSettingsDefaultsAreFactoryNotCurrent(t *testing.T) {
 	// 先把几项改成非默认值。
 	code, _ := e.do(t, "PUT", "/api/admin/settings", map[string]any{
 		"settings": map[string]any{
-			"fetch_limit": 77, "per_ip_per_min": 3, "scheduler_enabled": false,
+			"fetch_limit": 77, "concurrency": 3, "scheduler_enabled": false,
 		},
 	}, c, "")
 	if code != 200 {
@@ -37,8 +40,8 @@ func TestSettingsDefaultsAreFactoryNotCurrent(t *testing.T) {
 	if def["fetch_limit"].(float64) != 20 {
 		t.Errorf("默认 fetch_limit 应为 20，实际 %v", def["fetch_limit"])
 	}
-	if def["per_ip_per_min"].(float64) != 10 {
-		t.Errorf("默认 per_ip_per_min 应为 10，实际 %v", def["per_ip_per_min"])
+	if def["concurrency"].(float64) != 32 {
+		t.Errorf("默认 concurrency 应为 32，实际 %v", def["concurrency"])
 	}
 	if def["scheduler_enabled"] != true {
 		t.Errorf("默认应启用调度器，实际 %v", def["scheduler_enabled"])
@@ -56,5 +59,43 @@ func TestSettingsDefaultsAreFactoryNotCurrent(t *testing.T) {
 	// 把企业租户恢复成 consumers 会让整批账号一个都取不了件。
 	if def["tenant"] != cur["tenant"] {
 		t.Errorf("tenant 应回到部署配置的值 %v，实际 %v", cur["tenant"], def["tenant"])
+	}
+}
+
+// TestLegacySchedulerSettingsAreIgnored 校验升级前保存的配额不会回到界面或重新生效。
+func TestLegacySchedulerSettingsAreIgnored(t *testing.T) {
+	e := newEnv(t)
+	cookie := e.login(t)
+	legacy := map[string]any{
+		"auto_rate": false, "per_ip_per_min": 1, "per_client_per_min": 1,
+		"p3_per_min": 1, "egress_ips": 1, "per_proxy_concurrency": 1,
+	}
+	for key, value := range legacy {
+		if err := e.st.PutSetting(context.Background(), key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.srv.ApplySettings(legacy)
+	code, envelope := e.do(t, "PUT", "/api/admin/settings", map[string]any{"settings": legacy}, cookie, "")
+	if code != 200 {
+		t.Fatalf("旧客户端提交过时设置不应报错：%d", code)
+	}
+	data := envelope.Data.(map[string]any)
+	for _, section := range []string{"settings", "defaults", "health"} {
+		values := data[section].(map[string]any)
+		for key := range legacy {
+			if _, exists := values[key]; exists {
+				t.Errorf("%s 仍返回已删除的设置 %s", section, key)
+			}
+		}
+	}
+	if cfg := e.srv.sched.Config(); !cfg.Enabled || cfg.Concurrency != 32 {
+		t.Fatalf("过时设置不应改变调度行为：%+v", cfg)
+	}
+	health := data["health"].(map[string]any)
+	for _, key := range []string{"running", "concurrency", "last_run_count", "backlog", "unverified"} {
+		if _, exists := health[key]; !exists {
+			t.Errorf("health 缺少真实运行字段 %s", key)
+		}
 	}
 }

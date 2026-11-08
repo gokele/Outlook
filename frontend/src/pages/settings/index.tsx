@@ -16,7 +16,7 @@ export default function SettingsPage() {
   return (
     <PageContainer
       title="设置"
-      description="调度器、取件与限流的运行参数。修改后立即生效, 请谨慎调整轮换速率相关配置。"
+      description="调度器并发、轮换阈值与在线取件参数。保存后立即生效。"
       extra={
         <Button icon={<ReloadOutlined />} loading={isFetching} onClick={() => void refetch()}>
           重新加载
@@ -25,10 +25,10 @@ export default function SettingsPage() {
     >
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Alert
-          type="warning"
+          type="info"
           showIcon
-          message="轮换阈值与调度器速率上限直接决定令牌能否在 90 天内完成轮换"
-          description="调高轮换阈值或压低速率上限都会让轮换排期变紧。修改后建议回到总览页确认调度器健康度仍为「健康」。"
+          message="启动即补跑到期账号，运行中自动验证续期"
+          description="默认 32 并发，按到期优先级连续处理。调整轮换阈值或并发后，可到总览查看队列与执行进度。"
         />
         <QueryStateView
           isPending={isPending}
