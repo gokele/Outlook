@@ -121,6 +121,7 @@ jobs:
           APP_ENV=dev \
           MASTER_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
           ENV_FILE=/dev/null \
+          OUTBOUND_PROXY=http://127.0.0.1:9 \
           /tmp/api > /tmp/api.log 2>&1 &
           # 等端口就绪，别用固定 sleep —— 机器忙的时候会不够
           for i in $(seq 1 30); do
@@ -153,6 +154,16 @@ jobs:
           PASS=$(grep -o '"password":"[^"]*"' /tmp/api.log | head -1 | cut -d'"' -f4)
           echo "::add-mask::$PASS"
           ADMIN_PASS="$PASS" npm run seed:responsive
+
+      - name: 邮件链接检查
+        working-directory: frontend
+        env:
+          BASE_URL: http://127.0.0.1:8081
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          PASS=$(grep -o '"password":"[^"]*"' /tmp/api.log | head -1 | cut -d'"' -f4)
+          echo "::add-mask::$PASS"
+          ADMIN_PASS="$PASS" npm run check:mail-links
 
       - name: 响应式检查
         working-directory: frontend

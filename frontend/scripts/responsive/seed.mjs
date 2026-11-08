@@ -47,6 +47,14 @@ if (login.status !== 200) {
   process.exit(1);
 }
 
+// 夹具使用假授权码，灌入之前关闭自动轮换，避免调度器真的拿它们去验证。
+const paused = await call('/api/admin/settings', {
+  method: 'PUT',
+  body: { settings: { scheduler_enabled: false } },
+});
+if (paused.status !== 200) throw new Error('无法暂停测试环境的调度器');
+console.log('已暂停调度器（测试账号使用假授权码）');
+
 for (const [name, color] of [
   ['注册用', '#0E6B8E'],
   ['备用池', '#52c41a'],

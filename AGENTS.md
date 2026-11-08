@@ -93,6 +93,7 @@ ADMIN_PASS=xxx npm run check:mail-links   # 灌数据后检查正文链接的新
 PageContainer 的「刷新」按钮每一页都有，那样这条检查永远通过。
 
 它用系统已装的 Chrome（`CHROME_PATH` 可指定），不下载 playwright 自带的浏览器。
+灌入脚本会先关闭测试环境调度器；夹具授权码是假的，不能拿去请求微软。CI 的上游请求另走不可达的本地代理，邮件链接检查则在浏览器中拦截测试地址。
 CI 里作为独立任务跑在真实产物上（前端嵌进 Go 二进制、单端口托管），
 失败时截图会作为 artifact 上传。
 
